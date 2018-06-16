@@ -49,7 +49,7 @@
 #define FW_READ_ATTEMPTS 15
 #define FW_READ_TIMEOUT 4000000
 #define FAKE_REM_RETRY_ATTEMPTS 3
-#define MAX_IMPED 60000
+#define MAX_IMPED 100000
 
 #define WCD_MBHC_BTN_PRESS_COMPL_TIMEOUT_MS  50
 #define ANC_DETECT_RETRY_CNT 7
@@ -2837,6 +2837,7 @@ int wcd_mbhc_init(struct wcd_mbhc *mbhc, struct snd_soc_codec *codec,
 #ifdef CONFIG_MACH_ASUS_SDM660
 	int ret_hp = 0;
 #endif
+	impedance_det_en = true;
 	int hph_swh = 0;
 	int gnd_swh = 0;
 	u32 hph_moist_config[3];
