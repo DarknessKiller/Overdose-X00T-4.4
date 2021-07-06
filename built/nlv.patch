@@ -1,0 +1,91 @@
+From 4237e8acd7e92210c02d50ceed1f17cd16eaa25c Mon Sep 17 00:00:00 2001
+From: DarknessKiller <23330152+DarknessKiller@users.noreply.github.com>
+Date: Sat, 10 Apr 2021 14:04:05 +0800
+Subject: [PATCH] Restore QPNP Haptics
+
+---
+ .../boot/dts/qcom/X00TD/msm-pm660-overlay.dtsi   |  3 +--
+ .../boot/dts/qcom/X01BD/msm-pm660-overlay.dtsi   |  4 +++-
+ arch/arm/boot/dts/qcom/msm-pm660.dtsi            | 16 ++++++++++------
+ arch/arm64/configs/X00TD_defconfig               |  2 +-
+ 4 files changed, 15 insertions(+), 10 deletions(-)
+
+diff --git a/arch/arm/boot/dts/qcom/X00TD/msm-pm660-overlay.dtsi b/arch/arm/boot/dts/qcom/X00TD/msm-pm660-overlay.dtsi
+index 7f16be7b4210..c9d0b6d296b4 100644
+--- a/arch/arm/boot/dts/qcom/X00TD/msm-pm660-overlay.dtsi
++++ b/arch/arm/boot/dts/qcom/X00TD/msm-pm660-overlay.dtsi
+@@ -107,6 +107,5 @@
+ };
+ 
+ &pm660_haptics {
+-	qcom,actuator-type = <1>;
+-	qcom,vmax-mv = <2800>;
++	qcom,actuator-type = "erm";
+ };
+diff --git a/arch/arm/boot/dts/qcom/X01BD/msm-pm660-overlay.dtsi b/arch/arm/boot/dts/qcom/X01BD/msm-pm660-overlay.dtsi
+index 8f5d2295e3c4..45b3f68f3ecc 100644
+--- a/arch/arm/boot/dts/qcom/X01BD/msm-pm660-overlay.dtsi
++++ b/arch/arm/boot/dts/qcom/X01BD/msm-pm660-overlay.dtsi
+@@ -96,6 +96,8 @@
+ };
+ 
+ &pm660_haptics {
+-	qcom,actuator-type = <1>;
++	qcom,actuator-type = "erm";
++	qcom,wave-play-rate-us = <5000>;
++	qcom,play-mode = "buffer";
+ 	qcom,vmax-mv = <2800>;
+ };
+diff --git a/arch/arm/boot/dts/qcom/msm-pm660.dtsi b/arch/arm/boot/dts/qcom/msm-pm660.dtsi
+index 7f7a67bfae52..0281d8fe0a86 100644
+--- a/arch/arm/boot/dts/qcom/msm-pm660.dtsi
++++ b/arch/arm/boot/dts/qcom/msm-pm660.dtsi
+@@ -630,25 +630,29 @@
+ 		#address-cells = <2>;
+ 		#size-cells = <0>;
+ 
+-		pm660_haptics: qcom,haptics@c000 {
+-			compatible = "qcom,qpnp-haptics";
++		pm660_haptics: qcom,haptic@c000 {
++			compatible = "qcom,qpnp-haptic";
+ 			reg = <0xc000 0x100>;
+ 			interrupts = <0x1 0xc0 0x0 IRQ_TYPE_EDGE_BOTH>,
+ 					<0x1 0xc0 0x1 IRQ_TYPE_EDGE_BOTH>;
+-			interrupt-names = "hap-sc-irq", "hap-play-irq";
++			interrupt-names = "sc-irq", "play-irq";
+ 			qcom,pmic-revid = <&pm660_revid>;
+ 			qcom,pmic-misc = <&pm660_misc>;
+ 			qcom,misc-clk-trim-error-reg = <0xf3>;
+-			qcom,actuator-type = <0>;
++			qcom,actuator-type = "lra";
+ 			qcom,play-mode = "direct";
+ 			qcom,vmax-mv = <3000>;
+ 			qcom,ilim-ma = <800>;
+-			qcom,sc-dbc-cycles = <8>;
++			qcom,wave-shape = "square";
+ 			qcom,wave-play-rate-us = <6667>;
++			qcom,int-pwm-freq-khz = <505>;
++			qcom,sc-deb-cycles = <8>;
+ 			qcom,en-brake;
++			qcom,brake-pattern = [03 03 00 00];
+ 			qcom,lra-high-z = "opt0";
+ 			qcom,lra-auto-res-mode = "qwd";
+-			qcom,lra-res-cal-period = <4>;
++			qcom,lra-calibrate-at-eop = <0>;
++			qcom,correct-lra-drive-freq;
+ 		};
+ 	};
+ };
+diff --git a/arch/arm64/configs/X00TD_defconfig b/arch/arm64/configs/X00TD_defconfig
+index 6607deb74845..aee4948bf68d 100644
+--- a/arch/arm64/configs/X00TD_defconfig
++++ b/arch/arm64/configs/X00TD_defconfig
+@@ -573,7 +573,7 @@ CONFIG_LEDS_QPNP=y
+ CONFIG_LEDS_QPNP_FLASH_V2=y
+ CONFIG_LEDS_QPNP_WLED=y
+ CONFIG_LEDS_SYSCON=y
+-CONFIG_LEDS_QPNP_HAPTICS=y
++CONFIG_QPNP_HAPTIC=y
+ CONFIG_LEDS_TRIGGERS=y
+ CONFIG_SWITCH=y
+ CONFIG_RTC_CLASS=y

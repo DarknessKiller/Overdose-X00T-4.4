@@ -18,12 +18,12 @@
 	echo "LV Compile Done"
 	echo ""
 	cd $KERNELDIR/built
-	zip -r Overdose-X00TD-`date +%Y%m%d_%H%M`.zip * -x "*.zip"
+	zip -r Overdose-X00TD-`date +%Y%m%d_%H%M`.zip * -x "*.zip" "nlv.patch"
 	cd $KERNELDIR/
 
 	# NLV Version
 	rm .version
-	git cherry-pick 4237e8acd7e92210c02d50ceed1f17cd16eaa25c
+	git am $KERNELDIR/built/nlv.patch
 	rm $KERNELDIR/built/Image.gz-dtb
 	make ARCH=arm64 X00TD_defconfig
 	make -j$(nproc --all) ARCH=arm64 \
@@ -35,7 +35,7 @@
 	echo "NLV Compile Done"
 	echo ""
 	cd $KERNELDIR/built
-	zip -r Overdose-X00TD-`date +%Y%m%d_%H%M`-NLV.zip * -x "*.zip"
+	zip -r Overdose-X00TD-`date +%Y%m%d_%H%M`-NLV.zip * -x "*.zip" "nlv.patch"
 	cd $KERNELDIR/
 	git reset --hard HEAD^
 	echo "Zip Done"
