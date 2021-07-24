@@ -4,7 +4,7 @@
 ## AnyKernel setup
 # begin properties
 properties() { '
-kernel.string=Overdose Kernel - #LoveOD
+kernel.string=OverdoseOC Kernel - #LoveOD
 do.devicecheck=1
 do.modules=0
 do.systemless=1

@@ -1,6 +1,6 @@
 	#!/bin/bash
 	clear
-	echo Overdose Kernel Compile Tool
+	echo OverdoseOC Kernel Compile Tool
 	echo By MrDarkness
 	echo Please Sit Back And Chill...
 	export MAIN=`readlink -f ../`
@@ -18,7 +18,7 @@
 	echo "LV Compile Done"
 	echo ""
 	cd $KERNELDIR/built
-	zip -r Overdose-X00TD-`date +%Y%m%d_%H%M`-TPD.zip * -x "*.zip" "nlv.patch" "dclick.patch"
+	zip -r OverdoseOC-X00TD-`date +%Y%m%d_%H%M`-TPD.zip * -x "*.zip" "nlv.patch" "dclick.patch"
 	cd $KERNELDIR/
 	
 	# LV Version + DCLICK
@@ -34,7 +34,7 @@
 	echo "LV Compile Done"
 	echo ""
 	cd $KERNELDIR/built
-	zip -r Overdose-X00TD-`date +%Y%m%d_%H%M`-DCLICK.zip * -x "*.zip" "nlv.patch" "dclick.patch"
+	zip -r OverdoseOC-X00TD-`date +%Y%m%d_%H%M`-DCLICK.zip * -x "*.zip" "nlv.patch" "dclick.patch"
 	cd $KERNELDIR/
 	git reset --hard HEAD^
 
@@ -51,7 +51,7 @@
 	echo "NLV Compile Done"
 	echo ""
 	cd $KERNELDIR/built
-	zip -r Overdose-X00TD-`date +%Y%m%d_%H%M`-NLV-TPD.zip * -x "*.zip" "nlv.patch" "dclick.patch"
+	zip -r OverdoseOC-X00TD-`date +%Y%m%d_%H%M`-NLV-TPD.zip * -x "*.zip" "nlv.patch" "dclick.patch"
 	cd $KERNELDIR/
 	
 	# NLV Version + TPD
@@ -67,7 +67,7 @@
 	echo "NLV Compile Done"
 	echo ""
 	cd $KERNELDIR/built
-	zip -r Overdose-X00TD-`date +%Y%m%d_%H%M`-NLV-DCLICK.zip * -x "*.zip" "nlv.patch" "dclick.patch"
+	zip -r OverdoseOC-X00TD-`date +%Y%m%d_%H%M`-NLV-DCLICK.zip * -x "*.zip" "nlv.patch" "dclick.patch"
 	cd $KERNELDIR/
 	git reset --hard HEAD^
 	git reset --hard HEAD^
