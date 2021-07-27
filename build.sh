@@ -22,7 +22,6 @@
 	cd $KERNELDIR/
 
 	# NLV Version
-	rm .version
 	git am $KERNELDIR/built/nlv.patch
 	rm $KERNELDIR/built/Image.gz-dtb
 	make ARCH=arm64 X00TD_defconfig
