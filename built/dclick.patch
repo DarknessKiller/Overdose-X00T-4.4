@@ -1,0 +1,5985 @@
+From f56c1e587fb171ea9263d3cc01298ab6e2d9299a Mon Sep 17 00:00:00 2001
+From: DarknessKiller <23330152+DarknessKiller@users.noreply.github.com>
+Date: Thu, 19 Aug 2021 12:57:13 +0800
+Subject: [PATCH] X00TD: touchscreen panels update them to support X00T Roms
+
+* Checkout to https://gitlab.com/Pranavkapoor001/kernel_asus_sdm660/-/tree/Stardust/drivers/input/touchscreen for NVT_Touch_X00TD
+* Checkout to https://gitlab.com/Pranavkapoor001/kernel_asus_sdm660/-/tree/Stardust/drivers/input/touchscreen for synaptics_dsx_X00TD
+---
+ arch/arm64/configs/X00TD_defconfig            |    1 -
+ .../touchscreen/NVT_Touch_X00TD/Makefile      |    2 +-
+ .../touchscreen/NVT_Touch_X00TD/nt36xxx.c     |  248 +-
+ .../touchscreen/NVT_Touch_X00TD/nt36xxx.h     |   14 +-
+ .../NVT_Touch_X00TD/nt36xxx_mp_ctrlram.c      |    2 +-
+ .../hxchipset_X01BD/himax_common.c            |    8 +-
+ .../synaptics_dsx_active_pen.c                |    2 +-
+ .../synaptics_dsx_X00TD/synaptics_dsx_core.c  |  577 ++---
+ .../synaptics_dsx_X00TD/synaptics_dsx_core.h  |   16 +-
+ .../synaptics_dsx_fw_update.c                 |   15 +-
+ .../synaptics_dsx_gesture.c                   | 2308 +++++++++++++++++
+ .../synaptics_dsx_X00TD/synaptics_dsx_i2c.c   |    7 +-
+ .../synaptics_dsx_proximity.c                 |    2 +-
+ .../synaptics_dsx_test_reporting.c            | 1703 +-----------
+ 14 files changed, 2844 insertions(+), 2061 deletions(-)
+ create mode 100644 drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_gesture.c
+
+diff --git a/arch/arm64/configs/X00TD_defconfig b/arch/arm64/configs/X00TD_defconfig
+index 15d3e4f6a1d7..9463322c25db 100644
+--- a/arch/arm64/configs/X00TD_defconfig
++++ b/arch/arm64/configs/X00TD_defconfig
+@@ -371,7 +371,6 @@ CONFIG_INPUT_TOUCHSCREEN=y
+ # CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_v21 is not set
+ CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_X00TD=y
+ CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_CORE_X00TD=y
+-CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_I2C_X00TD=y
+ CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_RMI_DEV_X00TD=y
+ CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_X00TD=y
+ CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_TEST_REPORTING_X00TD=y
+diff --git a/drivers/input/touchscreen/NVT_Touch_X00TD/Makefile b/drivers/input/touchscreen/NVT_Touch_X00TD/Makefile
+index 62a5844ff650..cb08103a19e6 100644
+--- a/drivers/input/touchscreen/NVT_Touch_X00TD/Makefile
++++ b/drivers/input/touchscreen/NVT_Touch_X00TD/Makefile
+@@ -4,4 +4,4 @@
+ 
+ # Each configuration option enables a list of files.
+ 
+-obj-$(CONFIG_TOUCHSCREEN_NT36xxx_X00TD) += nt36xxx.o nt36xxx_fw_update.o nt36xxx_ext_proc.o nt36xxx_mp_ctrlram.o
++obj-$(CONFIG_TOUCHSCREEN_NT36xxx_X00TD) += nt36xxx.o nt36xxx_fw_update.o nt36xxx_ext_proc.o
+diff --git a/drivers/input/touchscreen/NVT_Touch_X00TD/nt36xxx.c b/drivers/input/touchscreen/NVT_Touch_X00TD/nt36xxx.c
+index c074988bd6a3..32d9791449fe 100644
+--- a/drivers/input/touchscreen/NVT_Touch_X00TD/nt36xxx.c
++++ b/drivers/input/touchscreen/NVT_Touch_X00TD/nt36xxx.c
+@@ -15,6 +15,8 @@
+  * more details.
+  *
+  */
++
++#if 0
+ /* Huaqin add by yuexinghan for ITO test start */
+ #include <linux/init.h>
+ #include <linux/cdev.h>
+@@ -28,7 +30,9 @@
+ #include <linux/list.h>
+ #include <linux/device.h>
+ /* Huaqin add by yuexinghan for ITO test end */
++#endif
+ #include <linux/kernel.h>
++#include <linux/kobject.h>
+ #include <linux/module.h>
+ #include <linux/delay.h>
+ #include <linux/interrupt.h>
+@@ -386,17 +390,18 @@ const uint16_t touch_key_array[TOUCH_KEY_NUM] = {
+ 
+ #if WAKEUP_GESTURE
+ /* Huaqin modify by yuexinghan for gesture mode 20171030 start */
+-/* Huaqin modify  for TT1176710 by liunianliang at 2018/03/30 start */
+ #define GESTURE_EVENT_C 		KEY_TP_GESTURE_C
+ #define GESTURE_EVENT_E 		KEY_TP_GESTURE_E
+ #define GESTURE_EVENT_S 		KEY_TP_GESTURE_S
+ #define GESTURE_EVENT_V 		KEY_TP_GESTURE_V
+ #define GESTURE_EVENT_W 		KEY_TP_GESTURE_W
+ #define GESTURE_EVENT_Z 		KEY_TP_GESTURE_Z
+-/* Huaqin modify  for TT1176710 by liunianliang at 2018/03/30 end */
+ /* Huaqin modify gesture keycode by yuexinghan 20171109 start */
+-#define GESTURE_EVENT_SWIPE_UP 0x2f6
+-#define GESTURE_EVENT_DOUBLE_CLICK	KEY_WAKEUP
++#define GESTURE_EVENT_SWIPE_UP 255
++#define GESTURE_EVENT_SWIPE_DOWN        256
++#define GESTURE_EVENT_SWIPE_LEFT        257
++#define GESTURE_EVENT_SWIPE_RIGHT       258
++#define GESTURE_EVENT_DOUBLE_CLICK      KEY_WAKEUP
+ /* Huaqin modify gesture keycode by yuexinghan 20171109 end */
+ 
+ const uint16_t gesture_key_array[] = {
+@@ -410,78 +415,80 @@ const uint16_t gesture_key_array[] = {
+ 	GESTURE_EVENT_E,
+ 	GESTURE_EVENT_S,
+ 	GESTURE_EVENT_SWIPE_UP,
+-	KEY_POWER,
+-	KEY_POWER,
+-	KEY_POWER,
++	GESTURE_EVENT_SWIPE_DOWN,
++	GESTURE_EVENT_SWIPE_LEFT,
++	GESTURE_EVENT_SWIPE_RIGHT,
+ };
+ /* Huaqin add by yuexinghan for gesture mode 20171030 end */
+ #endif
+ 
+ static uint8_t bTouchIsAwake = 0;
+ 
+-/* Huaqin add by yuexinghan for gesture mode 20171030 start */
+ #if WAKEUP_GESTURE
+-#define NVT_GESTURE_MODE "tpd_gesture"
+-
+ long gesture_mode = 0;
++static int allow_gesture = 1;
++static int screen_gesture = 0;
++static struct kobject *gesture_kobject;
+ 
+-static ssize_t nvt_gesture_mode_get_proc(struct file *file,
+-                        char __user *buffer, size_t size, loff_t *ppos)
++static ssize_t gesture_show(struct kobject *kobj, struct kobj_attribute *attr,
++                      char *buf)
+ {
+-	char ptr[64];
+-	unsigned int len = 0;
+-	unsigned int ret = 0;
+-
+-	/* Huaqin modify for upper layer definition by yuexinghan 20171108 start */
+-	//len = sprintf(ptr, "gesture_mode=0x%3X\n", (unsigned int)gesture_mode);
+-	if (gesture_mode == 0) {
+-		len = sprintf(ptr, "0\n");
+-	} else {
+-		len = sprintf(ptr, "1\n");
+-	}
+-	/* Huaqin modify for upper layer definition by yuexinghan 20171108 end */
+-	ret = simple_read_from_buffer(buffer, size, ppos, ptr, (size_t)len);
+-	return ret;
++        return sprintf(buf, "%d\n", allow_gesture);
+ }
+ 
+-static ssize_t nvt_gesture_mode_set_proc(struct file *filp,
+-                        const char __user *buffer, size_t count, loff_t *off)
++static ssize_t gesture_store(struct kobject *kobj, struct kobj_attribute *attr,
++                      const char *buf, size_t count)
+ {
+-	char msg[20] = {0};
+-	int ret = 0;
++        sscanf(buf, "%du", &allow_gesture);
++        return count;
++}
+ 
+-	ret = copy_from_user(msg, buffer, count);
+-	if (ret) {
+-		return -EFAULT;
+-	}
++static struct kobj_attribute gesture_attribute = __ATTR(dclicknode, 0664, gesture_show,
++                                                   gesture_store);
+ 
+-	ret = kstrtol(msg, 0, &gesture_mode);
+-	if (!ret) {
+-		/* Huaqin modify for upper layer definition by yuexinghan 20171108 start */
+-		//gesture_mode = gesture_mode & 0x1FF;
+-		if (gesture_mode == 0) {
+-			gesture_mode = 0;
+-		} else {
+-			gesture_mode = 0x1FF;
+-		}
+-		/* Huaqin modify for upper layer definition by yuexinghan 20171108 end */
+-	}
+-	else {
+-		NVT_ERR("set gesture mode failed\n");
+-	}
+-	NVT_LOG("gesture_mode = 0x%x\n", (unsigned int)gesture_mode);
++static ssize_t screengesture_show(struct kobject *kobj, struct kobj_attribute *attr,
++                      char *buf)
++{
++        return sprintf(buf, "%d\n", screen_gesture);
++}
+ 
+-	return count;
++static ssize_t screengesture_store(struct kobject *kobj, struct kobj_attribute *attr,
++                      const char *buf, size_t count)
++{
++        sscanf(buf, "%du", &screen_gesture);
++        return count;
+ }
+ 
+-static struct proc_dir_entry *nvt_gesture_mode_proc = NULL;
+-static const struct file_operations gesture_mode_proc_ops = {
+-	.owner = THIS_MODULE,
+-	.read = nvt_gesture_mode_get_proc,
+-	.write = nvt_gesture_mode_set_proc,
+-};
++static struct kobj_attribute screengesture_attribute = __ATTR(gesture_node, 0664, screengesture_show,
++                                                   screengesture_store);
++
++int create_gesture_node(void) {
++	int error = 0, error2 = 0;
++
++        gesture_kobject = kobject_create_and_add("touchpanel",
++                                                 kernel_kobj);
++        if(!gesture_kobject)
++                return -ENOMEM;
++
++        NVT_LOG("[Nvt-ts] : Gesture Node initialized successfully \n");
++
++        error = sysfs_create_file(gesture_kobject, &gesture_attribute.attr);
++        if (error) {
++                NVT_LOG("[Nvt-ts] : failed to create the gesture_node file in /sys/kernel/touchpanel \n");
++        }
++
++        error2 = sysfs_create_file(gesture_kobject, &screengesture_attribute.attr);
++        if (error) {
++                NVT_LOG("[Nvt-ts] : failed to create the gesture_node file in /sys/kernel/touchpanel \n");
++        }
++
++        return error;
++}
++
++void destroy_gesture(void) {
++	kobject_put(gesture_kobject);
++}
+ #endif
+-/* Huaqin add by yuexinghan for gesture mode 20171030 end */
+ 
+ 
+ /*******************************************************
+@@ -982,6 +989,7 @@ static int32_t nvt_flash_proc_init(void)
+ }
+ #endif
+ 
++#if 0
+ /* Huaqin add by yuexinghan for ITO test start */
+ /**********add ito test mode function  *******************/
+ int nvt_TestResultLen=0;
+@@ -1033,6 +1041,7 @@ int nvt_test_node_init(struct platform_device *tpinfo_device)
+ }
+ /*************************************************/
+ /* Huaqin add by yuexinghan for ITO test end */
++#endif
+ 
+ #if WAKEUP_GESTURE
+ /* Huaqin add by yuexinghan for gesture mode 20171030 start */
+@@ -1041,14 +1050,14 @@ int nvt_test_node_init(struct platform_device *tpinfo_device)
+ #define ID_GESTURE_WORD_V			14
+ #define ID_GESTURE_DOUBLE_CLICK 		15
+ #define ID_GESTURE_WORD_Z			16
+-//#define GESTURE_WORD_M			17
+-//#define GESTURE_WORD_O			18
++#define GESTURE_WORD_M			17
++#define GESTURE_WORD_O			18
+ #define ID_GESTURE_WORD_e			19
+ #define ID_GESTURE_WORD_S			20
+ #define ID_GESTURE_SLIDE_UP		21
+-//#define GESTURE_SLIDE_DOWN		22
+-//#define GESTURE_SLIDE_LEFT		23
+-//#define GESTURE_SLIDE_RIGHT		24
++#define GESTURE_SLIDE_DOWN		22
++#define GESTURE_SLIDE_LEFT		23
++#define GESTURE_SLIDE_RIGHT		24
+ 
+ static struct wake_lock gestrue_wakelock;
+ 
+@@ -1072,89 +1081,92 @@ return:
+ void nvt_ts_wakeup_gesture_report(uint8_t gesture_id)
+ {
+ 	uint32_t keycode = 0;
+-
+-	NVT_LOG("gesture_id = %d\n", gesture_id);
++	int is_double_tap = 0;
+ 
+ 	switch (gesture_id) {
+-/* Huaqin add by yuexinghan for gesture mode 20171030 start */
+ 		case ID_GESTURE_WORD_C:
+-			if (gesture_mode & MASK_GESTURE_C) {
+-				NVT_LOG("Gesture : Word-C.\n");
++			if (screen_gesture) {
+ 				keycode = gesture_key_array[0];
+ 			}
+ 			break;
+ 		case ID_GESTURE_WORD_W:
+-			if (gesture_mode & MASK_GESTURE_W) {
+-				NVT_LOG("Gesture : Word-W.\n");
++			if (screen_gesture) {
+ 				keycode = gesture_key_array[1];
+ 			}
+ 			break;
+ 		case ID_GESTURE_WORD_V:
+-			if (gesture_mode & MASK_GESTURE_V) {
+-				NVT_LOG("Gesture : Word-V.\n");
++			if (screen_gesture) {
+ 				keycode = gesture_key_array[2];
+ 			}
+ 			break;
+ 		case ID_GESTURE_DOUBLE_CLICK:
+-			if (gesture_mode & MASK_GESTURE_DOUBLE_CLICK) {
+-				NVT_LOG("Gesture : Double Click.\n");
++			if (allow_gesture) {
++				is_double_tap = 1;
+ 				keycode = gesture_key_array[3];
+ 			}
+ 			break;
+ 		case ID_GESTURE_WORD_Z:
+-			if (gesture_mode & MASK_GESTURE_Z) {
+-				NVT_LOG("Gesture : Word-Z.\n");
++			if (screen_gesture) {
+ 				keycode = gesture_key_array[4];
+ 			}
+ 			break;
+-		/* case GESTURE_WORD_M:
+-			NVT_LOG("Gesture : Word-M.\n");
++		case GESTURE_WORD_M:
++			if(screen_gesture) {
+ 			keycode = gesture_key_array[5];
++			}
+ 			break;
+ 		case GESTURE_WORD_O:
+-			NVT_LOG("Gesture : Word-O.\n");
++			if(screen_gesture) {
+ 			keycode = gesture_key_array[6];
+-			break; */
++			}
++			break;
+ 		case ID_GESTURE_WORD_e:
+-			if (gesture_mode & MASK_GESTURE_E) {
+-				NVT_LOG("Gesture : Word-e.\n");
++			if (screen_gesture) {
+ 				keycode = gesture_key_array[7];
+ 			}
+ 			break;
+ 		case ID_GESTURE_WORD_S:
+-			if (gesture_mode & MASK_GESTURE_W) {
+-				NVT_LOG("Gesture : Word-S.\n");
++			if (screen_gesture) {
+ 				keycode = gesture_key_array[8];
+ 			}
+ 			break;
+ 		case ID_GESTURE_SLIDE_UP:
+-			if (gesture_mode & MASK_GESTURE_SLIDE_UP) {
+-				NVT_LOG("Gesture : Slide UP.\n");
++			if (screen_gesture) {
+ 				keycode = gesture_key_array[9];
+ 			}
+ 			break;
+-		/* case GESTURE_SLIDE_DOWN:
+-			NVT_LOG("Gesture : Slide DOWN.\n");
++		 case GESTURE_SLIDE_DOWN:
++			if(screen_gesture) {
+ 			keycode = gesture_key_array[10];
++			}
+ 			break;
+ 		case GESTURE_SLIDE_LEFT:
+-			NVT_LOG("Gesture : Slide LEFT.\n");
++			if(screen_gesture) {
+ 			keycode = gesture_key_array[11];
++			}
+ 			break;
+ 		case GESTURE_SLIDE_RIGHT:
+-			NVT_LOG("Gesture : Slide RIGHT.\n");
++			if(screen_gesture) {
+ 			keycode = gesture_key_array[12];
+-			break; */
+-/* Huaqin add by yuexinghan for gesture mode 20171030 end */
++			}
++			break;
+ 		default:
+ 			break;
+ 	}
+ 
+-	if (keycode > 0) {
+-		input_report_key(ts->input_dev, keycode, 1);
+-		input_sync(ts->input_dev);
+-		input_report_key(ts->input_dev, keycode, 0);
+-		input_sync(ts->input_dev);
++	if (keycode > 0 ) {
++		if (is_double_tap == 1) {
++			input_report_key(ts->input_dev, GESTURE_EVENT_DOUBLE_CLICK, 1);
++			input_sync(ts->input_dev);
++			input_report_key(ts->input_dev, GESTURE_EVENT_DOUBLE_CLICK, 0);
++			input_sync(ts->input_dev);
++			is_double_tap = 0;
++		} else {
++			input_report_key(ts->input_dev, keycode, 1);
++			input_sync(ts->input_dev);
++			input_report_key(ts->input_dev, keycode, 0);
++			input_sync(ts->input_dev);
++		}
+ 	}
+ }
+ #endif
+@@ -1444,7 +1456,7 @@ static irqreturn_t nvt_ts_irq_handler(int32_t irq, void *dev_id)
+ 
+ #if WAKEUP_GESTURE
+ 	if (bTouchIsAwake == 0) {
+-		wake_lock_timeout(&gestrue_wakelock, msecs_to_jiffies(5000));
++		wake_lock_timeout(&gestrue_wakelock, msecs_to_jiffies(700));
+ 	}
+ #endif
+ 
+@@ -1539,7 +1551,7 @@ return:
+ *******************************************************/
+ static int32_t nvt_ts_probe(struct i2c_client *client, const struct i2c_device_id *id)
+ {
+-	int32_t ret = 0;
++	int32_t ret = 0, er = 0;
+ #if ((TOUCH_KEY_NUM > 0) || WAKEUP_GESTURE)
+ 	int32_t retry = 0;
+ #endif
+@@ -1668,6 +1680,13 @@ static int32_t nvt_ts_probe(struct i2c_client *client, const struct i2c_device_i
+ 	for (retry = 0; retry < (sizeof(gesture_key_array) / sizeof(gesture_key_array[0])); retry++) {
+ 		input_set_capability(ts->input_dev, EV_KEY, gesture_key_array[retry]);
+ 	}
++        __set_bit(GESTURE_EVENT_DOUBLE_CLICK, ts->input_dev->keybit);
++	__set_bit(GESTURE_EVENT_E, ts->input_dev->keybit);
++	__set_bit(GESTURE_EVENT_W, ts->input_dev->keybit);
++	__set_bit(GESTURE_EVENT_S, ts->input_dev->keybit);
++	__set_bit(GESTURE_EVENT_V, ts->input_dev->keybit);
++	__set_bit(GESTURE_EVENT_Z, ts->input_dev->keybit);
++	__set_bit(GESTURE_EVENT_C, ts->input_dev->keybit);
+ 	wake_lock_init(&gestrue_wakelock, WAKE_LOCK_SUSPEND, "poll-wake-lock");
+ #endif
+ 
+@@ -1717,11 +1736,14 @@ static int32_t nvt_ts_probe(struct i2c_client *client, const struct i2c_device_i
+ 	queue_delayed_work(nvt_fwu_wq, &ts->nvt_fwu_work, msecs_to_jiffies(14000));
+ #endif
+ 
++#if 0
+ 	/* Huaqin add by yuexinghan for ITO test start */
+ 	//--------add ito node
+ 	platform_device_register(&hwinfo_device);
+ 	nvt_test_node_init(&hwinfo_device);
+ 	/* Huaqin add by yuexinghan for ITO test end */
++#endif
++
+ // Huaqin add for esd check function. by zhengwu.lu. at 2018/2/28  start
+ /********************add protect , 20170908***********************/
+ #if NVT_TOUCH_ESD_PROTECT
+@@ -1757,15 +1779,9 @@ static int32_t nvt_ts_probe(struct i2c_client *client, const struct i2c_device_i
+ 	}
+ #endif
+ 
+-/* Huaqin add by yuexinghan for gesture mode 20171030 start */
+ #if WAKEUP_GESTURE
+-	nvt_gesture_mode_proc = proc_create(NVT_GESTURE_MODE, 0666, NULL,
+-				&gesture_mode_proc_ops);
+-	if (!nvt_gesture_mode_proc) {
+-		NVT_ERR("create proc tpd_gesture failed\n");
+-	}
++	er = create_gesture_node();
+ #endif
+-/* Huaqin add by yuexinghan for gesture mode 20171030 end */
+ 
+ 
+ #if defined(CONFIG_FB)
+@@ -1895,8 +1911,6 @@ static int32_t nvt_ts_suspend(struct device *dev)
+ 
+ 	mutex_lock(&ts->lock);
+ 
+-	NVT_LOG("start\n");
+-
+ 	bTouchIsAwake = 0;
+ // Huaqin add for esd check function. by zhengwu.lu. at 2018/2/28  start
+ #if NVT_TOUCH_ESD_PROTECT
+@@ -1906,8 +1920,7 @@ static int32_t nvt_ts_suspend(struct device *dev)
+ // Huaqin add for esd check function. by zhengwu.lu. at 2018/2/28  end
+ 
+ #if WAKEUP_GESTURE
+-	/* Huaqin add by yuexinghan for gesture mode 20171030 start */
+-	if (((gesture_mode & 0x100) == 0) || ((gesture_mode & 0x0FF) == 0)) {
++	if (!allow_gesture && !screen_gesture) {
+ // Huaqin add for ctp lose efficacy by zhengwu.lu. at 2018/04/18 For Platform start
+ 		//disable_irq(ts->client->irq);
+ 		nvt_irq_disable();
+@@ -1917,7 +1930,6 @@ static int32_t nvt_ts_suspend(struct device *dev)
+ 		buf[0] = EVENT_MAP_HOST_CMD;
+ 		buf[1] = 0x11;
+ 		CTP_I2C_WRITE(ts->client, I2C_FW_Address, buf, 2);
+-		NVT_LOG("Enter sleep mode\n");
+ 	}
+ 	else {
+ 		//---write i2c command to enter "wakeup gesture mode"---
+@@ -1927,9 +1939,7 @@ static int32_t nvt_ts_suspend(struct device *dev)
+ 
+ 		enable_irq_wake(ts->client->irq);
+ 
+-		NVT_LOG("Enter gesture mode\n");
+ 	}
+-	/* Huaqin add by yuexinghan for gesture mode 20171030 end */
+ #else // WAKEUP_GESTURE
+ // Huaqin add for ctp lose efficacy by zhengwu.lu. at 2018/04/18 For Platform start
+ 	//disable_irq(ts->client->irq);
+@@ -1962,17 +1972,9 @@ static int32_t nvt_ts_suspend(struct device *dev)
+ 	msleep(50);
+ 
+ 	mutex_unlock(&ts->lock);
+-// Huaqin add for vsp/vsn. by zhengwu.lu. at 2018/03/07  start
+-	if (((gesture_mode & 0x100) == 0) || ((gesture_mode & 0x0FF) == 0)) {
++	if (!allow_gesture && !screen_gesture) {
+ 	nvt_lcm_power_source_ctrl(data, 0);//disable vsp/vsn
+-	NVT_LOG("sleep suspend end  disable vsp/vsn\n");
+-	}
+-	else{
+-	NVT_LOG("gesture suspend end not disable vsp/vsn\n");
+ 	}
+-// Huaqin add for vsp/vsn. by zhengwu.lu. at 2018/03/07  end
+-
+-	NVT_LOG("end\n");
+ 
+ 	return 0;
+ }
+@@ -1997,7 +1999,6 @@ static int32_t nvt_ts_resume(struct device *dev)
+ 
+ 	mutex_lock(&ts->lock);
+ 
+-	NVT_LOG("start\n");
+ 
+ 	// please make sure display reset(RESX) sequence and mipi dsi cmds sent before this
+ 	nvt_bootloader_reset();
+@@ -2018,8 +2019,6 @@ static int32_t nvt_ts_resume(struct device *dev)
+ 
+ 	mutex_unlock(&ts->lock);
+ 
+-	NVT_LOG("end\n");
+-
+ 	return 0;
+ }
+ //Huaqin add for Reduce the bright screen time by qimaokang at 2018/4/20 start
+@@ -2161,6 +2160,7 @@ return:
+ static void __exit nvt_driver_exit(void)
+ {
+ 	i2c_del_driver(&nvt_i2c_driver);
++	destroy_gesture();
+ 
+ 	if (nvt_wq)
+ 		destroy_workqueue(nvt_wq);
+diff --git a/drivers/input/touchscreen/NVT_Touch_X00TD/nt36xxx.h b/drivers/input/touchscreen/NVT_Touch_X00TD/nt36xxx.h
+index 286bec2ff383..aeb3d2efa6d0 100644
+--- a/drivers/input/touchscreen/NVT_Touch_X00TD/nt36xxx.h
++++ b/drivers/input/touchscreen/NVT_Touch_X00TD/nt36xxx.h
+@@ -18,22 +18,24 @@
+ #ifndef 	_LINUX_NVT_TOUCH_H
+ #define		_LINUX_NVT_TOUCH_H
+ 
++#if 0
+ /* Huaqin add by yuexinghan for ITO test start */
+ #include <linux/platform_device.h>
+ #include <linux/device.h>
+ /* Huaqin add by yuexinghan for ITO test end */
++#endif
+ 
+ #include <linux/i2c.h>
+ #include <linux/input.h>
+ /* Huaqin add by yuexinghan for ITO test start */
+ #include <linux/regulator/consumer.h>
+-#include <linux/debugfs.h>
++//#include <linux/debugfs.h>
+ /* Huaqin add by yuexinghan for ITO test end */
+ #ifdef CONFIG_HAS_EARLYSUSPEND
+ #include <linux/earlysuspend.h>
+ #endif
+ 
+-#define NVT_DEBUG 1
++#define NVT_DEBUG 0
+ 
+ //---GPIO number---
+ #define NVTTOUCH_INT_PIN 943
+@@ -70,11 +72,13 @@
+ //---Input device info.---
+ #define NVT_TS_NAME "NVTCapacitiveTouchScreen"
+ 
++#if 0
+ /* Huaqin add by yuexinghan for ITO test start */
+ #define HWINFO_NAME		"tp_wake_switch"
+ //-------------add ito test
+ extern int32_t ito_selftest_open(void);
+ /* Huaqin add by yuexinghan for ITO test end */
++#endif
+ 
+ //---Touch info.---
+ #define TOUCH_MAX_FINGER_NUM 10
+@@ -87,7 +91,7 @@ extern const uint16_t touch_key_array[TOUCH_KEY_NUM];
+ //---Customerized func.---
+ #define NVT_TOUCH_PROC 1
+ #define NVT_TOUCH_EXT_PROC 1
+-#define NVT_TOUCH_MP 1
++#define NVT_TOUCH_MP 0
+ #define MT_PROTOCOL_B 1
+ #define WAKEUP_GESTURE 1
+ #if WAKEUP_GESTURE
+@@ -103,7 +107,7 @@ extern const uint16_t gesture_key_array[];
+ 
+ // Huaqin add for esd check function. by zhengwu.lu. at 2018/2/28  start
+ //---ESD Protect.---
+-#define NVT_TOUCH_ESD_PROTECT 1
++#define NVT_TOUCH_ESD_PROTECT 0
+ #define NVT_TOUCH_ESD_CHECK_PERIOD 1500	/* ms */
+ // Huaqin add for esd check function. by zhengwu.lu. at 2018/2/28  end
+ 
+@@ -196,9 +200,11 @@ typedef enum {
+ 
+ //---extern structures---
+ extern struct nvt_ts_data *ts;
++#if 0
+ /* Huaqin add by yuexinghan for ITO test start */
+ extern int nvt_TestResultLen;
+ /* Huaqin add by yuexinghan for ITO test end */
++#endif
+ 
+ //---extern functions---
+ extern int32_t CTP_I2C_READ(struct i2c_client *client, uint16_t address, uint8_t *buf, uint16_t len);
+diff --git a/drivers/input/touchscreen/NVT_Touch_X00TD/nt36xxx_mp_ctrlram.c b/drivers/input/touchscreen/NVT_Touch_X00TD/nt36xxx_mp_ctrlram.c
+index 8bd0e214108f..a935b188f1cb 100644
+--- a/drivers/input/touchscreen/NVT_Touch_X00TD/nt36xxx_mp_ctrlram.c
++++ b/drivers/input/touchscreen/NVT_Touch_X00TD/nt36xxx_mp_ctrlram.c
+@@ -2039,7 +2039,7 @@ int32_t nvt_mp_proc_init(void)
+ 				 * Ex. nvt_pid = 500A
+ 				 *     mpcriteria = "novatek-mp-criteria-500A"
+ 				 */
+-				snprintf(mpcriteria, PAGE_SIZE, "novatek-mp-criteria-%04X", ts->nvt_pid);
++				snprintf(mpcriteria, sizeof(mpcriteria), "novatek-mp-criteria-%04X", ts->nvt_pid);
+ 
+ 				nvt_mp_parse_dt(np, mpcriteria);
+ 			} else {
+diff --git a/drivers/input/touchscreen/hxchipset_X01BD/himax_common.c b/drivers/input/touchscreen/hxchipset_X01BD/himax_common.c
+index c75b2d474a12..1b9abe111c7d 100644
+--- a/drivers/input/touchscreen/hxchipset_X01BD/himax_common.c
++++ b/drivers/input/touchscreen/hxchipset_X01BD/himax_common.c
+@@ -235,14 +235,20 @@ static ssize_t nvt_gesture_mode_get_proc(struct file *file,
+ static ssize_t nvt_gesture_mode_set_proc(struct file *filp,
+                         const char __user *buffer, size_t count, loff_t *off)
+ {
++	char msg[20] = {0};
+ 	int ret = 0;
+ 	struct himax_ts_data *ts = private_ts;
+ 	if (private_ts->suspended) {
+ 		I("Touch is already sleep cant modify gesture node\n");
+ 		return count;
+ 	}
++	ret = copy_from_user(msg, buffer, count);
++	I("msg = %s\n", msg);
++	if (ret) {
++		return -EFAULT;
++	}
+ 
+-	ret = kstrtol_from_user(buffer, count, 0, &gesture_mode);
++	ret = kstrtol(msg, 0, &gesture_mode);
+ 	if (!ret) {
+ 		if (gesture_mode == 0) {
+ 			gesture_mode = 0;
+diff --git a/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_active_pen.c b/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_active_pen.c
+index 2f0f295739f4..184ddbdb4c1d 100644
+--- a/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_active_pen.c
++++ b/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_active_pen.c
+@@ -41,7 +41,7 @@
+ #include <linux/input/synaptics_dsx_X00TD.h>
+ #include "synaptics_dsx_core.h"
+ 
+-#define APEN_PHYS_NAME "synaptics_dsx/active_pen"
++#define APEN_PHYS_NAME "synaptics_dsx_X00TD/active_pen"
+ 
+ #define ACTIVE_PEN_MAX_PRESSURE_16BIT 65535
+ #define ACTIVE_PEN_MAX_PRESSURE_8BIT 255
+diff --git a/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_core.c b/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_core.c
+index a19ccc0ffb43..d17bc4aa3e23 100644
+--- a/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_core.c
++++ b/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_core.c
+@@ -46,7 +46,6 @@
+ #include <linux/input/mt.h>
+ #endif
+ 
+-/* Huaqin add by diganyun for ITO test 2018/05/23 start */
+ #include <linux/init.h>
+ #include <linux/cdev.h>
+ #include <linux/fs.h>
+@@ -57,15 +56,11 @@
+ #include <linux/miscdevice.h>
+ #include <linux/list.h>
+ #include <linux/device.h>
+-/* Huaqin modify for ZQL1650-1523 by diganyun at 2018/06/07 start */
+-#include <asm/uaccess.h>
++#include <linux/uaccess.h>
+ #include <linux/proc_fs.h>
+-/* Huaqin modify for ZQL1650-1523 by diganyun at 2018/06/07 end */
+-/* Huaqin add by diganyun for ITO test 2018/05/23 end */
+ 
+-
+-#define INPUT_PHYS_NAME "synaptics_dsx/touch_input"
+-#define STYLUS_PHYS_NAME "synaptics_dsx/stylus"
++#define INPUT_PHYS_NAME "synaptics_dsx_X00TD/touch_input"
++#define STYLUS_PHYS_NAME "synaptics_dsx_X00TD/stylus"
+ 
+ #define VIRTUAL_KEY_MAP_FILE_NAME "virtualkeys." PLATFORM_DRIVER_NAME
+ 
+@@ -94,14 +89,9 @@
+ #define FB_READY_WAIT_MS 100
+ #define FB_READY_TIMEOUT_S 30
+ */
+-/* Huaqin modify for ZQL1650-1523 by diganyun at 2018/06/20 start */
+ #define SYNA_TDDI
+-/* Huaqin modify for ZQL1650-1523 by diganyun at 2018/06/20 end */
+-
+ #ifdef SYNA_TDDI
+-/* Huaqin modify for ZQL1650-1523 by zhangxiude at 2018/07/18 start */
+ #define TDDI_LPWG_WAIT_US 10
+-/* Huaqin modify for ZQL1650-1523 by zhangxiude at 2018/07/18 end */
+ #endif
+ #define RPT_TYPE (1 << 0)
+ #define RPT_X_LSB (1 << 1)
+@@ -143,16 +133,15 @@
+ #define F12_CONTINUOUS_MODE 0x00
+ #define F12_WAKEUP_GESTURE_MODE 0x02
+ #define F12_UDG_DETECT 0x0f
+-/* Huaqin modify for ZQL1650-1523 by diganyun at 2018/06/07 start */
+-#define F12_DOUBLECLICK_DETECT  	0x03
+-#define F12_SWIPE_DETECT 		0x07
+-#define F12_VEE_DETECT 			0x0a
+-#define F12_UNICODE_DETECT 		0x0b
+-#define GESTURE_C                       0x63
+-#define GESTURE_E		    	0x65
+-#define GESTURE_S		    	0x73
+-#define GESTURE_W		    	0x77
+-#define GESTURE_Z		    	0x7A
++#define F12_DOUBLECLICK_DETECT 0x03
++#define F12_SWIPE_DETECT 0x07
++#define F12_VEE_DETECT 0x0a
++#define F12_UNICODE_DETECT 0x0b
++#define GESTURE_C	0x63
++#define GESTURE_E	0x65
++#define GESTURE_S	0x73
++#define GESTURE_W	0x77
++#define GESTURE_Z	0x7A
+ 
+ #define GESTURE_EVENT_C 		KEY_TP_GESTURE_C
+ #define GESTURE_EVENT_E 		KEY_TP_GESTURE_E
+@@ -160,12 +149,9 @@
+ #define GESTURE_EVENT_V 		KEY_TP_GESTURE_V
+ #define GESTURE_EVENT_W 		KEY_TP_GESTURE_W
+ #define GESTURE_EVENT_Z 		KEY_TP_GESTURE_Z
+-#define GESTURE_EVENT_SWIPE_UP 		0x2f6
++#define GESTURE_EVENT_SWIPE_UP 		258
+ #define GESTURE_EVENT_DOUBLE_CLICK 	KEY_WAKEUP
+ 
+-#define SYNA_GESTURE_MODE 		"tpd_gesture"
+-/* Huaqin modify for ZQL1650-1523 by diganyun at 2018/06/07 end */
+-
+ static int synaptics_rmi4_check_status(struct synaptics_rmi4_data *rmi4_data,
+ 		bool *was_in_bl_mode);
+ static int synaptics_rmi4_free_fingers(struct synaptics_rmi4_data *rmi4_data);
+@@ -766,44 +752,51 @@ static struct kobj_attribute virtual_key_map_attr = {
+ 	},
+ 	.show = synaptics_rmi4_virtual_key_map_show,
+ };
+-// Huaqin add for vsp/vsn. by zhengwu.lu. at 2018/03/07  start
+-#if SYNA_POWER_SOURCE_CUST_EN
+ 
++#if SYNA_POWER_SOURCE_CUST_EN
+ static int syna_lcm_bias_power_init(struct synaptics_rmi4_data *rmi4_data)
+ {
+ 	int ret;
+-	rmi4_data->lcm_lab = regulator_get(rmi4_data->pdev->dev.parent, "lcm_lab");
+-	if (IS_ERR(rmi4_data->lcm_lab)){
++
++	rmi4_data->lcm_lab = regulator_get(rmi4_data->pdev->dev.parent,
++						"lcm_lab");
++	if (IS_ERR(rmi4_data->lcm_lab)) {
+ 		ret = PTR_ERR(rmi4_data->lcm_lab);
+ 		pr_err("Regulator get failed lcm_lab ret=%d", ret);
+ 		goto _end;
+ 	}
+-	if (regulator_count_voltages(rmi4_data->lcm_lab)>0){
+-		ret = regulator_set_voltage(rmi4_data->lcm_lab, LCM_LAB_MIN_UV, LCM_LAB_MAX_UV);
+-		if (ret){
++	if (regulator_count_voltages(rmi4_data->lcm_lab) > 0) {
++		ret = regulator_set_voltage(rmi4_data->lcm_lab, LCM_LAB_MIN_UV,
++						LCM_LAB_MAX_UV);
++		if (ret) {
+ 			pr_err("Regulator set_vtg failed lcm_lab ret=%d", ret);
+ 			goto reg_lcm_lab_put;
+ 		}
+ 	}
+-	rmi4_data->lcm_ibb = regulator_get(rmi4_data->pdev->dev.parent, "lcm_ibb");
+-	if (IS_ERR(rmi4_data->lcm_ibb)){
++
++	rmi4_data->lcm_ibb = regulator_get(rmi4_data->pdev->dev.parent,
++						"lcm_ibb");
++	if (IS_ERR(rmi4_data->lcm_ibb)) {
+ 		ret = PTR_ERR(rmi4_data->lcm_ibb);
+ 		pr_err("Regulator get failed lcm_ibb ret=%d", ret);
+ 		goto reg_set_lcm_lab_vtg;
+ 	}
+-	if (regulator_count_voltages(rmi4_data->lcm_ibb)>0){
+-		ret = regulator_set_voltage(rmi4_data->lcm_ibb, LCM_IBB_MIN_UV, LCM_IBB_MAX_UV);
+-		if (ret){
++	if (regulator_count_voltages(rmi4_data->lcm_ibb) > 0) {
++		ret = regulator_set_voltage(rmi4_data->lcm_ibb, LCM_IBB_MIN_UV,
++						LCM_IBB_MAX_UV);
++		if (ret) {
+ 			pr_err("Regulator set_vtg failed lcm_lab ret=%d", ret);
+ 			goto reg_lcm_ibb_put;
+ 		}
+ 	}
++
+ 	return 0;
++
+ reg_lcm_ibb_put:
+ 	regulator_put(rmi4_data->lcm_ibb);
+ 	rmi4_data->lcm_ibb = NULL;
+ reg_set_lcm_lab_vtg:
+-	if (regulator_count_voltages(rmi4_data->lcm_lab) > 0){
++	if (regulator_count_voltages(rmi4_data->lcm_lab) > 0) {
+ 		regulator_set_voltage(rmi4_data->lcm_lab, 0, LCM_LAB_MAX_UV);
+ 	}
+ reg_lcm_lab_put:
+@@ -815,81 +808,76 @@ _end:
+ 
+ static int syna_lcm_bias_power_deinit(struct synaptics_rmi4_data *rmi4_data)
+ {
+-	if (rmi4_data-> lcm_ibb != NULL){
+-		if (regulator_count_voltages(rmi4_data->lcm_ibb) > 0){
+-			regulator_set_voltage(rmi4_data->lcm_ibb, 0, LCM_LAB_MAX_UV);
++	if (rmi4_data->lcm_ibb != NULL) {
++		if (regulator_count_voltages(rmi4_data->lcm_ibb) > 0) {
++			regulator_set_voltage(rmi4_data->lcm_ibb, 0,
++						LCM_LAB_MAX_UV);
+ 		}
+ 		regulator_put(rmi4_data->lcm_ibb);
+ 	}
+-	if (rmi4_data-> lcm_lab != NULL){
+-		if (regulator_count_voltages(rmi4_data->lcm_lab) > 0){
+-			regulator_set_voltage(rmi4_data->lcm_lab, 0, LCM_LAB_MAX_UV);
++	if (rmi4_data->lcm_lab != NULL) {
++		if (regulator_count_voltages(rmi4_data->lcm_lab) > 0) {
++			regulator_set_voltage(rmi4_data->lcm_lab, 0,
++						LCM_LAB_MAX_UV);
+ 		}
+ 		regulator_put(rmi4_data->lcm_lab);
+ 	}
+-	return 0;
+ 
++	return 0;
+ }
+ 
+-
+-static int syna_lcm_power_source_ctrl(struct synaptics_rmi4_data *rmi4_data, int enable)
++static int syna_lcm_power_source_ctrl(struct synaptics_rmi4_data *rmi4_data,
++					int enable)
+ {
+ 	int rc;
+ 
+-	if (rmi4_data->lcm_lab!= NULL && rmi4_data->lcm_ibb!= NULL){
+-		if (enable){
+-			if (atomic_inc_return(&(rmi4_data->lcm_lab_power)) == 1) {
++	if (rmi4_data->lcm_lab != NULL && rmi4_data->lcm_ibb != NULL) {
++		if (enable) {
++			if (atomic_inc_return(&(rmi4_data->lcm_lab_power))
++				== 1) {
+ 				rc = regulator_enable(rmi4_data->lcm_lab);
+ 				if (rc) {
+ 					atomic_dec(&(rmi4_data->lcm_lab_power));
+ 					pr_err("Regulator lcm_lab enable failed rc=%d", rc);
+ 				}
+-			}
+-			else {
++			} else
+ 				atomic_dec(&(rmi4_data->lcm_lab_power));
+-			}
+-			if (atomic_inc_return(&(rmi4_data->lcm_ibb_power)) == 1) {
++			if (atomic_inc_return(&(rmi4_data->lcm_ibb_power))
++				== 1) {
+ 				rc = regulator_enable(rmi4_data->lcm_ibb);
+ 				if (rc) {
+ 					atomic_dec(&(rmi4_data->lcm_ibb_power));
+ 					pr_err("Regulator lcm_ibb enable failed rc=%d", rc);
+ 				}
+-			}
+-			else {
++			} else
+ 				atomic_dec(&(rmi4_data->lcm_ibb_power));
+-			}
+-		}
+-		else {
+-			if (atomic_dec_return(&(rmi4_data->lcm_lab_power)) == 0) {
++		} else {
++			if (atomic_dec_return(&(rmi4_data->lcm_lab_power))
++				== 0) {
+ 				rc = regulator_disable(rmi4_data->lcm_lab);
+-				if (rc)
+-				{
++				if (rc) {
+ 					atomic_inc(&(rmi4_data->lcm_lab_power));
+ 					pr_err("Regulator lcm_lab disable failed rc=%d", rc);
+ 				}
+-			}
+-			else{
++			} else
+ 				atomic_inc(&(rmi4_data->lcm_lab_power));
+-			}
+-			if (atomic_dec_return(&(rmi4_data->lcm_ibb_power)) == 0) {
++			if (atomic_dec_return(&(rmi4_data->lcm_ibb_power))
++				== 0) {
+ 				rc = regulator_disable(rmi4_data->lcm_ibb);
+ 				if (rc)	{
+ 					atomic_inc(&(rmi4_data->lcm_ibb_power));
+ 					pr_err("Regulator lcm_ibb disable failed rc=%d", rc);
+ 				}
+-			}
+-			else{
++			} else
+ 				atomic_inc(&(rmi4_data->lcm_ibb_power));
+-			}
+ 		}
+-	}
+-	else
++	} else
+ 		pr_err("Regulator lcm_ibb or lcm_lab is invalid");
++
+ 	return 0;
+ }
++#endif /* SYNA_POWER_SOURCE_CUST_EN */
+ 
+-#endif
+-// Huaqin add for vsp/vsn. by zhengwu.lu. at 2018/03/07  end
+ static ssize_t synaptics_rmi4_f01_reset_store(struct device *dev,
+ 		struct device_attribute *attr, const char *buf, size_t count)
+ {
+@@ -1104,58 +1092,87 @@ static ssize_t synaptics_rmi4_virtual_key_map_show(struct kobject *kobj,
+ 	return count;
+ }
+ 
+-/* Huaqin modify  for ZQL1650-1523 by diganyun at 2018/06/07 start */
+-
+-long syna_gesture_mode = 0;
++long syna_gesture_mode;
+ struct synaptics_rmi4_data *syna_rmi4_data;
+ 
+-static ssize_t syna_gesture_mode_get_proc(struct file *file,
+-                        char __user *buffer, size_t size, loff_t *ppos)
++static int allow_gesture = 1;
++static int screen_gesture = 0;
++static struct kobject *gesture_kobject;
++
++static ssize_t gesture_show(struct kobject *kobj, struct kobj_attribute *attr,
++                      char *buf)
+ {
+-	char ptr[64];
+-	unsigned int len = 0;
+-	unsigned int ret = 0;
++        return sprintf(buf, "%d\n", allow_gesture);
++}
+ 
+-	if (syna_gesture_mode == 0) {
+-		len = sprintf(ptr, "0\n");
++static ssize_t gesture_store(struct kobject *kobj, struct kobj_attribute *attr,
++                      const char *buf, size_t count)
++{
++        sscanf(buf, "%du", &allow_gesture);
++	if (allow_gesture == 0) {
++		syna_gesture_mode = 0;
++		syna_rmi4_data->enable_wakeup_gesture = 0;
+ 	} else {
+-		len = sprintf(ptr, "1\n");
++		syna_gesture_mode = 0x1FF;
++		syna_rmi4_data->enable_wakeup_gesture = 1;
+ 	}
+-	ret = simple_read_from_buffer(buffer, size, ppos, ptr, (size_t)len);
+-	return ret;
++	pr_err("syna_gesture_mode = 0x%x, enable_wakeup_gesture = %d \n", (unsigned int)syna_gesture_mode, syna_rmi4_data->enable_wakeup_gesture);
++        return count;
+ }
+ 
+-static ssize_t syna_gesture_mode_set_proc(struct file *filp,
+-                        const char __user *buffer, size_t count, loff_t *off)
++static struct kobj_attribute gesture_attribute = __ATTR(dclicknode, 0664, gesture_show,
++                                                   gesture_store);
++
++static ssize_t screengesture_show(struct kobject *kobj, struct kobj_attribute *attr,
++                      char *buf)
+ {
+-	int ret = 0;
++        return sprintf(buf, "%d\n", screen_gesture);
++}
+ 
+-	ret = kstrtol_from_user(buffer, count, 0, &syna_gesture_mode);
+-	if (!ret) {
+-		if (syna_gesture_mode == 0) {
+-			syna_gesture_mode = 0;
+-			syna_rmi4_data->enable_wakeup_gesture = 0;
+-		} else {
+-			syna_gesture_mode = 0x1FF;
+-			syna_rmi4_data->enable_wakeup_gesture = 1;
+-		}
+-	}
+-	else {
+-		pr_err("set gesture mode failed\n");
++static ssize_t screengesture_store(struct kobject *kobj, struct kobj_attribute *attr,
++                      const char *buf, size_t count)
++{
++        sscanf(buf, "%du", &screen_gesture);
++	if (screen_gesture == 0) {
++		syna_gesture_mode = 0;
++		syna_rmi4_data->enable_wakeup_gesture = 0;
++	} else {
++		syna_gesture_mode = 0x1FF;
++		syna_rmi4_data->enable_wakeup_gesture = 1;
+ 	}
+ 	pr_err("syna_gesture_mode = 0x%x, enable_wakeup_gesture = %d \n", (unsigned int)syna_gesture_mode, syna_rmi4_data->enable_wakeup_gesture);
+-
+-	return count;
++        return count;
+ }
+ 
+-static struct proc_dir_entry *syna_gesture_mode_proc = NULL;
+-static const struct file_operations syna_gesture_mode_proc_ops = {
+-	.owner = THIS_MODULE,
+-	.read = syna_gesture_mode_get_proc,
+-	.write = syna_gesture_mode_set_proc,
+-};
++static struct kobj_attribute screengesture_attribute = __ATTR(gesture_node, 0664, screengesture_show,
++                                                   screengesture_store);
++
++int create_gesture_node_syna(void) {
++	int error = 0, error2 = 0;
++
++        gesture_kobject = kobject_create_and_add("touchpanel",
++                                                 kernel_kobj);
++        if(!gesture_kobject)
++                return -ENOMEM;
++
++        pr_err("[Syna-ts] : Gesture Node initialized successfully \n");
++
++        error = sysfs_create_file(gesture_kobject, &gesture_attribute.attr);
++        if (error) {
++                pr_err("[Syna-ts] : failed to create the gesture_node file in /sys/kernel/touchpanel \n");
++        }
++
++        error2 = sysfs_create_file(gesture_kobject, &screengesture_attribute.attr);
++        if (error) {
++                pr_err("[Syna-ts] : failed to create the gesture_node file in /sys/kernel/touchpanel \n");
++        }
++
++        return error;
++}
+ 
+-/* Huaqin modify  for ZQL1650-1523 by diganyun at 2018/06/07 end */
++void destroy_gesture_syna(void) {
++	kobject_put(gesture_kobject);
++}
+ 
+ static void synaptics_rmi4_f11_wg(struct synaptics_rmi4_data *rmi4_data,
+ 		bool enable)
+@@ -1314,9 +1331,7 @@ static int synaptics_rmi4_f11_abs_report(struct synaptics_rmi4_data *rmi4_data,
+ 			input_sync(rmi4_data->input_dev);
+ 			rmi4_data->suspend = false;
+ 		}
+-		/* Huaqin modify for ZQL1650-1523 by diganyun at 2018/06/07 start */
+-		//synaptics_rmi4_wakeup_gesture(rmi4_data, false);
+-		/* Huaqin modify for ZQL1650-1523 by diganyun at 2018/06/07 end */
++/*		synaptics_rmi4_wakeup_gesture(rmi4_data, false); */
+ 		return 0;
+ 	}
+ 
+@@ -1426,48 +1441,41 @@ exit:
+ 	return touch_count;
+ }
+ 
+-/* Huaqin modify  for ZQL1650-1523 by diganyun at 2018/06/07 start */
+-static uint32_t synaptics_check_unicode_gesture(struct synaptics_rmi4_data *rmi4_data, int gesture_id)
++static uint32_t synaptics_check_unicode_gesture(
++			struct synaptics_rmi4_data *rmi4_data, int gesture_id)
+ {
+ 	uint32_t keycode = 0;
+ 
+-	dev_info(rmi4_data->pdev->dev.parent,
+-			"%s: gesture_id = %x \n",
++	dev_info(rmi4_data->pdev->dev.parent, "%s: gesture_id = %x \n",
+ 			__func__, gesture_id);
+ 
+-
+ 	switch (gesture_id) {
+-		case GESTURE_C:
+-				pr_err("Gesture : Word-C.\n");
+-				keycode = GESTURE_EVENT_C;
+-			break;
+-		case GESTURE_W:
+-				pr_err("Gesture : Word-W.\n");
+-				keycode = GESTURE_EVENT_W;
+-			break;
+-
+-		case GESTURE_Z:
+-				pr_err("Gesture : Word_Z.\n");
+-				keycode = GESTURE_EVENT_Z;
+-			break;
+-
+-		case GESTURE_E:
+-				pr_err("Gesture : Word_E.\n");
+-				keycode = GESTURE_EVENT_E;
+-			break;
+-
+-		case GESTURE_S:
+-				pr_err("Gesture : Word_S.\n");
+-				keycode = GESTURE_EVENT_S;
+-			break;
+-
+-		default:
+-			break;
++	case GESTURE_C:
++		pr_debug("Gesture: Word-C.\n");
++		keycode = GESTURE_EVENT_C;
++		break;
++	case GESTURE_W:
++		pr_debug("Gesture: Word-W.\n");
++		keycode = GESTURE_EVENT_W;
++		break;
++	case GESTURE_Z:
++		pr_debug("Gesture: Word_Z.\n");
++		keycode = GESTURE_EVENT_Z;
++		break;
++	case GESTURE_E:
++		pr_debug("Gesture: Word_E.\n");
++		keycode = GESTURE_EVENT_E;
++		break;
++	case GESTURE_S:
++		pr_debug("Gesture: Word_S.\n");
++		keycode = GESTURE_EVENT_S;
++		break;
++	default:
++		break;
+ 	}
+ 
+-	return keycode ;
++	return keycode;
+ }
+-/* Huaqin modify  for ZQL1650-1523 by diganyun at 2018/06/07 end */
+ 
+ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
+ 		struct synaptics_rmi4_fn *fhandler)
+@@ -1486,7 +1494,6 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
+ 	int wx;
+ 	int wy;
+ 	int temp;
+-	/* Huaqin modify  for ZQL1650-1523 by diganyun at 2018/06/07 start */
+ 	int gesture_count= 0;
+ 	uint32_t keycode = 0;
+ 	int abs_x;
+@@ -1496,7 +1503,6 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
+ 	int gesture_y_distance;
+ 	int horizontal_direction = 1;
+ 	int vertical_direction = 2;
+-	/* Huaqin modify  for ZQL1650-1523 by diganyun at 2018/06/07 end */
+ #if defined(REPORT_2D_PRESSURE) || defined(F51_DISCRETE_FORCE)
+ 	int pressure;
+ #endif
+@@ -1523,7 +1529,6 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
+ 	extra_data = (struct synaptics_rmi4_f12_extra_data *)fhandler->extra;
+ 	size_of_2d_data = sizeof(struct synaptics_rmi4_f12_finger_data);
+ 
+-	/* Huaqin modify  for ZQL1650-1523 by diganyun at 2018/06/07 start */
+ 	if (rmi4_data->suspend && rmi4_data->enable_wakeup_gesture) {
+ 		retval = synaptics_rmi4_reg_read(rmi4_data,
+ 				data_addr + extra_data->data4_offset,
+@@ -1532,9 +1537,9 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
+ 		if (retval < 0)
+ 			return 0;
+ 
+-		for (;gesture_count<5;gesture_count++) {
+-			pr_err("[%d] DGY %d\n", gesture_count, rmi4_data->gesture_detection[gesture_count]);
+-		}
++		for (; gesture_count<5; gesture_count++)
++			pr_debug("[%d] DGY %d\n", gesture_count,
++				rmi4_data->gesture_detection[gesture_count]);
+ 
+ 		gesture_type = rmi4_data->gesture_detection[0];
+ 		gesture_x_distance = rmi4_data->gesture_detection[1];
+@@ -1542,51 +1547,52 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
+ 
+ 		dev_info(rmi4_data->pdev->dev.parent,
+ 			"%s: gesture_type, gesture_x_distance, gesture_y_distance = %x, %x, %x\n",
+-			__func__, gesture_type, gesture_x_distance, gesture_y_distance);
++			__func__, gesture_type, gesture_x_distance,
++			gesture_y_distance);
+ 
+ 		if (gesture_type != F12_UDG_DETECT) {
+ 			switch (gesture_type) {
+-				case F12_DOUBLECLICK_DETECT:
+-					pr_err("Gesture : Double click.\n");
+-					keycode = GESTURE_EVENT_DOUBLE_CLICK;
+-					break;
+-
+-				case F12_UNICODE_DETECT:
+-					pr_err("Gesture : Unicode detect.\n");
+-					keycode = synaptics_check_unicode_gesture(rmi4_data,rmi4_data->gesture_detection[2]);
+-					break;
+-
+-				case F12_VEE_DETECT:
+-					pr_err("Gesture : Word_V.\n");
+-					keycode = GESTURE_EVENT_V;
+-					break;
+-
+-				case F12_SWIPE_DETECT:
+-					abs_x = abs(gesture_x_distance);
+-					abs_y = abs(gesture_y_distance);
+-					direction = (abs_x > abs_y) ? horizontal_direction : vertical_direction;
+-					if ((direction == vertical_direction) &&(gesture_y_distance > 0)){
+-						pr_err("Gesture : Swipe up.\n");
+-						keycode = GESTURE_EVENT_SWIPE_UP;
+-					}
+-					break;
+-				default:
+-					break;
++			case F12_DOUBLECLICK_DETECT:
++				pr_debug("Gesture: Double click.\n");
++				keycode = GESTURE_EVENT_DOUBLE_CLICK;
++				break;
++			case F12_UNICODE_DETECT:
++				pr_debug("Gesture: Unicode detect.\n");
++				keycode = synaptics_check_unicode_gesture(rmi4_data,rmi4_data->gesture_detection[2]);
++				break;
++			case F12_VEE_DETECT:
++				pr_debug("Gesture: Word_V.\n");
++				keycode = GESTURE_EVENT_V;
++				break;
++			case F12_SWIPE_DETECT:
++				abs_x = abs(gesture_x_distance);
++				abs_y = abs(gesture_y_distance);
++				direction = (abs_x > abs_y) ?
++						horizontal_direction :
++						vertical_direction;
++				if ((direction == vertical_direction) &&
++					(gesture_y_distance > 0)){
++					pr_debug("Gesture: Swipe up.\n");
++					keycode = GESTURE_EVENT_SWIPE_UP;
++				}
++				break;
++			default:
++				break;
+ 			}
+-			pr_err("Gesture : keycode = %ud.\n", keycode);
++
++			pr_debug("Gesture: keycode = %ud.\n", keycode);
+ 			if (keycode > 0) {
+-				input_report_key(rmi4_data->input_dev, keycode, 1);
+-				input_sync(rmi4_data->input_dev);
+-				input_report_key(rmi4_data->input_dev, keycode, 0);
+-				input_sync(rmi4_data->input_dev);
++			input_report_key(rmi4_data->input_dev, keycode, 1);
++			input_sync(rmi4_data->input_dev);
++			input_report_key(rmi4_data->input_dev, keycode, 0);
++			input_sync(rmi4_data->input_dev);
+ 			}
+-
+-			//synaptics_rmi4_wakeup_gesture(rmi4_data, false);
+-			//rmi4_data->suspend = false;
++			/* synaptics_rmi4_wakeup_gesture(rmi4_data, false); */
++			/* rmi4_data->suspend = false; */
+ 		}
++
+ 		return 0;
+ 	}
+-	/* Huaqin modify  for ZQL1650-1523 by diganyun at 2018/06/07 end */
+ 
+ 	/* Determine the total number of fingers to process */
+ 	if (extra_data->data15_size) {
+@@ -2005,7 +2011,6 @@ static void synaptics_rmi4_sensor_report(struct synaptics_rmi4_data *rmi4_data,
+ 	struct synaptics_rmi4_exp_fhandler *exp_fhandler;
+ 	struct synaptics_rmi4_device_info *rmi;
+ 
+-
+ 	rmi = &(rmi4_data->rmi4_mod_info);
+ 
+ 	/*
+@@ -2142,7 +2147,6 @@ static int synaptics_rmi4_irq_enable(struct synaptics_rmi4_data *rmi4_data,
+ {
+ 	int retval = 0;
+ 	unsigned char data[MAX_INTR_REGISTERS];
+-
+ 	const struct synaptics_dsx_board_data *bdata =
+ 			rmi4_data->hw_if->board_data;
+ 
+@@ -2176,12 +2180,10 @@ static int synaptics_rmi4_irq_enable(struct synaptics_rmi4_data *rmi4_data,
+ 					__func__);
+ 			goto exit;
+ 		}
+-		//(bdata->irq_flags) |= IRQF_ONESHOT;
++
+ 		retval = request_threaded_irq(rmi4_data->irq, NULL,
+ 				synaptics_rmi4_irq, bdata->irq_flags,
+ 				PLATFORM_DRIVER_NAME, rmi4_data);
+-
+-		printk(" %s: irq=%d\n", __func__, rmi4_data->irq);
+ 		if (retval < 0) {
+ 			dev_err(rmi4_data->pdev->dev.parent,
+ 					"%s: Failed to create irq thread\n",
+@@ -2791,8 +2793,19 @@ static int synaptics_rmi4_f12_init(struct synaptics_rmi4_data *rmi4_data,
+ 			ctrl_23_size++;
+ 		else if (retval < 0)
+ 			goto exit;
++
+ 	}
+ 
++	retval = synaptics_rmi4_f12_find_sub(rmi4_data,
++			fhandler, query_5->data, sizeof(query_5->data),
++			6, 20, 0);
++	if (retval == 1)
++		rmi4_data->set_wakeup_gesture = 2;
++	else if (retval == 0)
++		rmi4_data->set_wakeup_gesture = 0;
++	else if (retval < 0)
++		goto exit;
++
+ 	retval = synaptics_rmi4_reg_read(rmi4_data,
+ 			fhandler->full_addr.ctrl_base + ctrl_23_offset,
+ 			ctrl_23->data,
+@@ -3635,7 +3648,7 @@ static int synaptics_rmi4_gpio_setup(int gpio, bool config, int dir, int state)
+ 	unsigned char buf[16];
+ 
+ 	if (config) {
+-		snprintf(buf, PAGE_SIZE, "dsx_gpio_%u\n", gpio);
++		snprintf(buf, sizeof(buf), "dsx_gpio_%u\n", gpio);
+ 
+ 		retval = gpio_request(gpio, buf);
+ 		if (retval) {
+@@ -3745,24 +3758,30 @@ static void synaptics_rmi4_set_params(struct synaptics_rmi4_data *rmi4_data)
+ 	}
+ 
+ 	if (rmi4_data->f11_wakeup_gesture || rmi4_data->f12_wakeup_gesture) {
+-		/* Huaqin modify  for ZQL1650-1523 by diganyun at 2018/06/07 start */
+ 		set_bit(KEY_WAKEUP, rmi4_data->input_dev->keybit);
+-		input_set_capability(rmi4_data->input_dev, EV_KEY, GESTURE_EVENT_DOUBLE_CLICK);
++		input_set_capability(rmi4_data->input_dev, EV_KEY,
++					GESTURE_EVENT_DOUBLE_CLICK);
+ 		set_bit(KEY_C, rmi4_data->input_dev->keybit);
+-		input_set_capability(rmi4_data->input_dev, EV_KEY, GESTURE_EVENT_C);
++		input_set_capability(rmi4_data->input_dev, EV_KEY,
++					GESTURE_EVENT_C);
+ 		set_bit(KEY_E, rmi4_data->input_dev->keybit);
+-		input_set_capability(rmi4_data->input_dev, EV_KEY, GESTURE_EVENT_E);
++		input_set_capability(rmi4_data->input_dev, EV_KEY,
++					GESTURE_EVENT_E);
+ 		set_bit(KEY_S, rmi4_data->input_dev->keybit);
+-		input_set_capability(rmi4_data->input_dev, EV_KEY, GESTURE_EVENT_S);
++		input_set_capability(rmi4_data->input_dev, EV_KEY,
++					GESTURE_EVENT_S);
+ 		set_bit(KEY_W, rmi4_data->input_dev->keybit);
+-		input_set_capability(rmi4_data->input_dev, EV_KEY, GESTURE_EVENT_W);
++		input_set_capability(rmi4_data->input_dev, EV_KEY,
++					GESTURE_EVENT_W);
+ 		set_bit(KEY_Z, rmi4_data->input_dev->keybit);
+-		input_set_capability(rmi4_data->input_dev, EV_KEY, GESTURE_EVENT_Z);
++		input_set_capability(rmi4_data->input_dev, EV_KEY,
++					GESTURE_EVENT_Z);
+ 		set_bit(KEY_V, rmi4_data->input_dev->keybit);
+-		input_set_capability(rmi4_data->input_dev, EV_KEY, GESTURE_EVENT_V);
++		input_set_capability(rmi4_data->input_dev, EV_KEY,
++					GESTURE_EVENT_V);
+ 		set_bit(KEY_UP, rmi4_data->input_dev->keybit);
+-		input_set_capability(rmi4_data->input_dev, EV_KEY, GESTURE_EVENT_SWIPE_UP);
+-		/* Huaqin modify  for ZQL1650-1523 by diganyun at 2018/06/07 end */
++		input_set_capability(rmi4_data->input_dev, EV_KEY,
++					GESTURE_EVENT_SWIPE_UP);
+ 	}
+ 
+ 	return;
+@@ -3797,6 +3816,7 @@ static int synaptics_rmi4_set_input_dev(struct synaptics_rmi4_data *rmi4_data)
+ 	rmi4_data->input_dev->id.version = SYNAPTICS_DSX_DRIVER_VERSION;
+ 	rmi4_data->input_dev->dev.parent = rmi4_data->pdev->dev.parent;
+ 	input_set_drvdata(rmi4_data->input_dev, rmi4_data);
++
+ 	set_bit(EV_SYN, rmi4_data->input_dev->evbit);
+ 	set_bit(EV_KEY, rmi4_data->input_dev->evbit);
+ 	set_bit(EV_ABS, rmi4_data->input_dev->evbit);
+@@ -4473,74 +4493,13 @@ exit:
+ }
+ EXPORT_SYMBOL(synaptics_rmi4_new_function);
+ 
+-/* Huaqin add by diganyun for ITO test 2018/05/23 start */
+-/**********add ito test mode function  *******************/
+-#define HWINFO_NAME		"tp_wake_switch"
+-
+-int syna_TestResultLen=0;
+-static struct platform_device hwinfo_device= {
+-	.name = HWINFO_NAME,
+-	.id = -1,
+-};
+-
+-/* Huaqin add by diganyun for ITO function 2018/05/31 start */
+-extern ssize_t ito_test(void);
+-static ssize_t ito_test_show(struct device *dev,struct device_attribute *attr,char *buf)
+-{
+-	int count;
+-	ito_test();
+-	count = sprintf(buf, "%d\n", syna_TestResultLen);
+-	printk("%s , res = %d \n", __func__, syna_TestResultLen);
+-	return count;
+-}
+-/* Huaqin add by diganyun for ITO function 2018/05/31 end */
+-
+-static ssize_t ito_test_store(struct device *dev,struct device_attribute *attr,const char *buf, size_t count)
+-{
+-	return 0;
+-}
+-
+-static DEVICE_ATTR(factory_check, 0644, ito_test_show, ito_test_store);
+-
+-static struct attribute *ito_test_attributes[] ={
+-
+-	&dev_attr_factory_check.attr,
+-	NULL
+-};
+-static struct attribute_group ito_test_attribute_group = {
+-
+-.attrs = ito_test_attributes
+-
+-};
+-int syna_test_node_init(struct platform_device *tpinfo_device)
+-{
+-	int err=0;
+-    err = sysfs_create_group(&tpinfo_device->dev.kobj, &ito_test_attribute_group);
+-    if (0 != err)
+-    {
+-        printk( "[nvt-ito] %s() - ERROR: sysfs_create_group() failed.",  __func__);
+-        sysfs_remove_group(&tpinfo_device->dev.kobj, &ito_test_attribute_group);
+-        return -EIO;
+-    }
+-    else
+-    {
+-        printk("[nvt-ito] %s() - sysfs_create_group() succeeded.", __func__);
+-    }
+-    return err;
+-}
+-/*************************************************/
+-/* Huaqin add by diganyun for ITO test 2018/05/23 end */
+-
+ static int synaptics_rmi4_probe(struct platform_device *pdev)
+ {
+-	int retval;
++	int retval, er = 0;
+ 	unsigned char attr_count;
+ 	struct synaptics_rmi4_data *rmi4_data;
+ 	const struct synaptics_dsx_hw_interface *hw_if;
+ 	const struct synaptics_dsx_board_data *bdata;
+-	dev_err(&pdev->dev,
+-					"%s:  func to synaptics_rmi4_probe\n",
+-					__func__);
+ 
+ 	hw_if = pdev->dev.platform_data;
+ 	if (!hw_if) {
+@@ -4586,9 +4545,7 @@ static int synaptics_rmi4_probe(struct platform_device *pdev)
+ 
+ 	platform_set_drvdata(pdev, rmi4_data);
+ 
+-/* Huaqin modify for ZQL1650-1523 by diganyun at 2018/06/07 start */
+ 	syna_rmi4_data = rmi4_data;
+-/* Huaqin modify for ZQL1650-1523 by diganyun at 2018/06/07 end */
+ 
+ 	vir_button_map = bdata->vir_button_map;
+ 
+@@ -4615,12 +4572,11 @@ static int synaptics_rmi4_probe(struct platform_device *pdev)
+ 				__func__);
+ 		goto err_set_gpio;
+ 	}
+-    // Huaqin add for vsp/vsn. by zhengwu.lu. at 2018/03/07  start
++
+ #if SYNA_POWER_SOURCE_CUST_EN
+ 	atomic_set(&(rmi4_data->lcm_lab_power), 0);
+ 	atomic_set(&(rmi4_data->lcm_ibb_power), 0);
+ 	retval = syna_lcm_bias_power_init(rmi4_data);
+-
+ 	if (retval) {
+ 		pr_err("power resource init error!\n");
+ 		goto err_power_resource_init_fail;
+@@ -4628,7 +4584,6 @@ static int synaptics_rmi4_probe(struct platform_device *pdev)
+ 
+ 	syna_lcm_power_source_ctrl(rmi4_data, 1);
+ #endif
+-// Huaqin add for vsp/vsn. by zhengwu.lu. at 2018/03/07  end
+ 
+ 	if (hw_if->ui_hw_init) {
+ 		retval = hw_if->ui_hw_init(rmi4_data);
+@@ -4673,8 +4628,6 @@ static int synaptics_rmi4_probe(struct platform_device *pdev)
+ 
+ 	rmi4_data->irq = gpio_to_irq(bdata->irq_gpio);
+ 
+-	printk(" %s  rmi4_data->irq = %d ,bdata->irq_gpio = %d\n",__func__, rmi4_data->irq ,bdata->irq_gpio);
+-
+ 	retval = synaptics_rmi4_irq_enable(rmi4_data, true, false);
+ 	if (retval < 0) {
+ 		dev_err(&pdev->dev,
+@@ -4720,19 +4673,7 @@ static int synaptics_rmi4_probe(struct platform_device *pdev)
+ 	interrupt_signal.si_code = SI_USER;
+ #endif
+ 
+-/* Huaqin add by diganyun for ITO test 2018/05/23 start */
+-	//--------add ito node
+-	platform_device_register(&hwinfo_device);
+-	syna_test_node_init(&hwinfo_device);
+-/* Huaqin add by diganyun for ITO test 2018/05/23 end */
+-/* Huaqin modify  for ZQL1650-1523 by diganyun at 2018/06/07 start */
+-		syna_gesture_mode_proc = proc_create(SYNA_GESTURE_MODE, 0666, NULL,
+-					&syna_gesture_mode_proc_ops);
+-		if (!syna_gesture_mode_proc) {
+-			pr_err("create proc tpd_gesture failed\n");
+-		}
+-/* Huaqin modify  for ZQL1650-1523 by diganyun at 2018/06/07 end */
+-
++	er = create_gesture_node_syna();
+ 
+ 	rmi4_data->rb_workqueue =
+ 			create_singlethread_workqueue("dsx_rebuild_workqueue");
+@@ -4797,12 +4738,10 @@ err_set_input_dev:
+ 		synaptics_rmi4_gpio_setup(bdata->power_gpio, false, 0, 0);
+ 
+ err_ui_hw_init:
+-// Huaqin add for vsp/vsn. by zhengwu.lu. at 2018/03/07  start
+ err_set_gpio:
+ 	syna_lcm_power_source_ctrl(rmi4_data, 0);
+ 	syna_lcm_bias_power_deinit(rmi4_data);
+ err_power_resource_init_fail:
+-// Huaqin add for vsp/vsn. by zhengwu.lu. at 2018/03/07  end
+ 	synaptics_rmi4_enable_reg(rmi4_data, false);
+ 
+ err_enable_reg:
+@@ -4881,7 +4820,6 @@ static int synaptics_rmi4_remove(struct platform_device *pdev)
+ }
+ 
+ #ifdef CONFIG_FB
+-//Huaqin add for Reduce the bright screen time by zhangxiude at 2018/7/26 end
+ static int synaptics_rmi4_fb_notifier_cb(struct notifier_block *self,
+ 		unsigned long event, void *data)
+ {
+@@ -4891,23 +4829,26 @@ static int synaptics_rmi4_fb_notifier_cb(struct notifier_block *self,
+ 			container_of(self, struct synaptics_rmi4_data,
+ 			fb_notifier);
+ 
+-	if (evdata && evdata->data && event == FB_EARLY_EVENT_BLANK) {
+-		transition = evdata->data;
+-		if (*transition == FB_BLANK_POWERDOWN) {
+-			synaptics_rmi4_suspend(&rmi4_data->pdev->dev);
+-			rmi4_data->fb_ready = false;
++	if (evdata && evdata->data) {
++		if (event == FB_EARLY_EVENT_BLANK)
++		{
++			transition = evdata->data;
++			if (*transition == FB_BLANK_POWERDOWN) {
++				synaptics_rmi4_suspend(&rmi4_data->pdev->dev);
++				rmi4_data->fb_ready = false;
++			}
+ 		}
+-	}else if(evdata && evdata->data && event == FB_EVENT_BLANK){
+-	        transition = evdata->data;
+-		if (*transition == FB_BLANK_UNBLANK) {
+-			synaptics_rmi4_resume(&rmi4_data->pdev->dev);
+-			rmi4_data->fb_ready = true;
++		if (event == FB_EVENT_BLANK) {
++			transition = evdata->data;
++			if (*transition == FB_BLANK_UNBLANK) {
++				synaptics_rmi4_resume(&rmi4_data->pdev->dev);
++				rmi4_data->fb_ready = true;
++			}
+ 		}
+ 	}
+ 
+ 	return 0;
+ }
+-//Huaqin add for Reduce the bright screen time by zhangxiude at 2018/7/26 end
+ #endif
+ 
+ #ifdef USE_EARLYSUSPEND
+@@ -4952,9 +4893,7 @@ static void synaptics_rmi4_early_suspend(struct early_suspend *h)
+ 				sizeof(device_ctrl));
+ 	}
+ 	synaptics_rmi4_wakeup_gesture(rmi4_data, true);
+-	/* Huaqin modify for ZQL1650-1523 by zhangxiude at 2018/07/18 start */
+ 	udelay(TDDI_LPWG_WAIT_US);
+-	/* Huaqin modify for ZQL1650-1523 by zhangxiude at 2018/07/18 end */
+ #endif
+ 	synaptics_rmi4_irq_enable(rmi4_data, false, false);
+ 	synaptics_rmi4_sleep_enable(rmi4_data, true);
+@@ -5064,9 +5003,7 @@ static int synaptics_rmi4_suspend(struct device *dev)
+ 					sizeof(device_ctrl));
+ 		}
+ 		synaptics_rmi4_wakeup_gesture(rmi4_data, true);
+-		/* Huaqin modify for ZQL1650-1523 by diganyun at 2018/06/20 start */
+ 		udelay(TDDI_LPWG_WAIT_US);
+-		/* Huaqin modify for ZQL1650-1523 by diganyun at 2018/06/20 end */
+ #endif
+ 		synaptics_rmi4_irq_enable(rmi4_data, false, false);
+ 		synaptics_rmi4_sleep_enable(rmi4_data, true);
+@@ -5083,15 +5020,15 @@ exit:
+ 	mutex_unlock(&exp_data.mutex);
+ 
+ 	rmi4_data->suspend = true;
+-// Huaqin add for vsp/vsn. by zhengwu.lu. at 2018/03/07  start
+-	if (rmi4_data->enable_wakeup_gesture){
+-		pr_err("gesture suspend end not disable vsp/vsn\n");
+-	}
+-	else{
+-		syna_lcm_power_source_ctrl(rmi4_data, 0);//disable vsp/vsn
+-		pr_err("sleep suspend end  disable vsp/vsn\n");
++
++	if (rmi4_data->enable_wakeup_gesture)
++		pr_debug("gesture suspend end not disable vsp/vsn\n");
++	else {
++		/* disable vsp/vsn */
++		syna_lcm_power_source_ctrl(rmi4_data, 0);
++		pr_debug("sleep suspend end  disable vsp/vsn\n");
+ 	}
+-// Huaqin add for vsp/vsn. by zhengwu.lu. at 2018/03/07  end
++
+ 	return 0;
+ }
+ 
+@@ -5102,14 +5039,15 @@ static int synaptics_rmi4_resume(struct device *dev)
+ #endif
+ 	struct synaptics_rmi4_exp_fhandler *exp_fhandler;
+ 	struct synaptics_rmi4_data *rmi4_data = dev_get_drvdata(dev);
+-// Huaqin add for vsp/vsn. by zhengwu.lu. at 2018/03/07  start
+-	syna_lcm_power_source_ctrl(rmi4_data, 1);//enable vsp/vsn
+-// Huaqin add for vsp/vsn. by zhengwu.lu. at 2018/03/07  end
++
++	/* enable vsp/vsn */
++	syna_lcm_power_source_ctrl(rmi4_data, 1);
+ 	if (rmi4_data->stay_awake)
+ 		return 0;
+ 
+ 	if (rmi4_data->enable_wakeup_gesture) {
+ 		disable_irq_wake(rmi4_data->irq);
++		synaptics_rmi4_wakeup_gesture(rmi4_data, false);
+ 		goto exit;
+ 	}
+ 
+@@ -5175,6 +5113,7 @@ static int __init synaptics_rmi4_init(void)
+ static void __exit synaptics_rmi4_exit(void)
+ {
+ 	platform_driver_unregister(&synaptics_rmi4_driver);
++	destroy_gesture_syna();
+ 
+ 	synaptics_rmi4_bus_exit_X00TD();
+ 
+@@ -5183,9 +5122,9 @@ static void __exit synaptics_rmi4_exit(void)
+ 
+ module_init(synaptics_rmi4_init);
+ module_exit(synaptics_rmi4_exit);
+-/* Huaqin modify for ZQL1650-1523 by zhangxiude at 2018/07/18 start */
++
+ EXPORT_SYMBOL(syna_gesture_mode);
+-/* Huaqin modify for ZQL1650-1523 by zhangxiude at 2018/07/18 end */
++
+ MODULE_AUTHOR("Synaptics, Inc.");
+ MODULE_DESCRIPTION("Synaptics DSX Touch Driver");
+ MODULE_LICENSE("GPL v2");
+diff --git a/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_core.h b/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_core.h
+index 4730b41cfb3c..752de3014bff 100644
+--- a/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_core.h
++++ b/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_core.h
+@@ -38,16 +38,14 @@
+ #define SYNAPTICS_DS5 (1 << 1)
+ #define SYNAPTICS_DSX_DRIVER_PRODUCT (SYNAPTICS_DS4 | SYNAPTICS_DS5)
+ #define SYNAPTICS_DSX_DRIVER_VERSION 0x2070
+-// Huaqin add for vsp/vsn. by zhengwu.lu. at 2018/03/07  start
+-#define SYNA_POWER_SOURCE_CUST_EN  1
++#define SYNA_POWER_SOURCE_CUST_EN 1
+ 
+ #if SYNA_POWER_SOURCE_CUST_EN
+-#define LCM_LAB_MIN_UV                      6000000
+-#define LCM_LAB_MAX_UV                      6000000
+-#define LCM_IBB_MIN_UV                      6000000
+-#define LCM_IBB_MAX_UV                      6000000
++#define LCM_LAB_MIN_UV	6000000
++#define LCM_LAB_MAX_UV	6000000
++#define LCM_IBB_MIN_UV	6000000
++#define LCM_IBB_MAX_UV	6000000
+ #endif
+-// Huaqin add for vsp/vsn. by zhengwu.lu. at 2018/03/07  end
+ 
+ #include <linux/version.h>
+ #ifdef CONFIG_FB
+@@ -336,6 +334,7 @@ struct synaptics_rmi4_device_info {
+  * @sensor_max_y: maximum y coordinate for 2D touch
+  * @force_min: minimum force value
+  * @force_max: maximum force value
++ * @set_wakeup_gesture: location of set wakeup gesture
+  * @flash_prog_mode: flag to indicate flash programming mode status
+  * @irq_enabled: flag to indicate attention interrupt enable status
+  * @fingers_on_2d: flag to indicate presence of fingers in 2D area
+@@ -407,6 +406,7 @@ struct synaptics_rmi4_data {
+ 	int sensor_max_y;
+ 	int force_min;
+ 	int force_max;
++	int set_wakeup_gesture;
+ 	bool flash_prog_mode;
+ 	bool irq_enabled;
+ 	bool fingers_on_2d;
+@@ -430,14 +430,12 @@ struct synaptics_rmi4_data {
+ 			bool enable);
+ 	void (*report_touch)(struct synaptics_rmi4_data *rmi4_data,
+ 			struct synaptics_rmi4_fn *fhandler);
+-    // Huaqin add for vsp/vsn. by zhengwu.lu. at 2018/03/07  start
+ #if SYNA_POWER_SOURCE_CUST_EN
+ 	struct regulator *lcm_lab;
+ 	struct regulator *lcm_ibb;
+ 	atomic_t lcm_lab_power;
+ 	atomic_t lcm_ibb_power;
+ #endif
+-// Huaqin add for vsp/vsn. by zhengwu.lu. at 2018/03/07  end
+ };
+ 
+ struct synaptics_dsx_bus_access {
+diff --git a/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_fw_update.c b/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_fw_update.c
+index 0ba2cce980fc..e4b8d67852dc 100644
+--- a/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_fw_update.c
++++ b/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_fw_update.c
+@@ -43,30 +43,23 @@
+ #include "synaptics_dsx_core.h"
+ 
+ #define FW_IHEX_NAME "synaptics/startup_fw_update.bin"
+-/* Huaqin modify for ZQL1650-1521 by diganyun at 2018/06/06  start */
+ #define FW_IMAGE_NAME "startup_fw_update.img"
+-
+ #define DO_STARTUP_FW_UPDATE
+ 
+-
+-#ifdef DO_STARTUP_FW_UPDATE
+-/* Huaqin modify for ZQL1650-1570 by diganyun at 2018/06/14  start */
+ /*
++#ifdef DO_STARTUP_FW_UPDATE
+ #ifdef CONFIG_FB
+ #define WAIT_FOR_FB_READY
+ #define FB_READY_WAIT_MS 100
+ #define FB_READY_TIMEOUT_S 30
+ #endif
+-*/
+-/* Huaqin modify for ZQL1650-1570 by diganyun at 2018/06/14  end */
+ #endif
+-#define ENABLE_SYS_REFLASH true
+-/* Huaqin modify for ZQL1650-1521 by diganyun at 2018/06/06  end */
++*/
+ /*
+ #define MAX_WRITE_SIZE 4096
+ */
+ 
+-
++#define ENABLE_SYS_REFLASH true
+ #define FORCE_UPDATE false
+ #define DO_LOCKDOWN false
+ 
+@@ -3959,6 +3952,8 @@ int set_tddi_lockdown_data(unsigned char *lockdown_data, unsigned short leng)
+ 	if (retval < 0)
+ 		goto exit;
+ 
++	blk_cnt = fwu->blkcount.tddi_lockdown_data;
++
+ 	fwu->config_size = fwu->blkcount.tddi_lockdown_data * fwu->block_size;
+ 	retval = fwu_allocate_read_config_buf(fwu->config_size);
+ 	if (retval < 0)
+diff --git a/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_gesture.c b/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_gesture.c
+new file mode 100644
+index 000000000000..27db9f86cc7c
+--- /dev/null
++++ b/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_gesture.c
+@@ -0,0 +1,2308 @@
++/*
++ * Synaptics DSX touchscreen driver
++ *
++ * Copyright (C) 2012-2016 Synaptics Incorporated. All rights reserved.
++ *
++ * Copyright (C) 2012 Alexandra Chin <alexandra.chin@tw.synaptics.com>
++ * Copyright (C) 2012 Scott Lin <scott.lin@tw.synaptics.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ * GNU General Public License for more details.
++ *
++ * INFORMATION CONTAINED IN THIS DOCUMENT IS PROVIDED "AS-IS," AND SYNAPTICS
++ * EXPRESSLY DISCLAIMS ALL EXPRESS AND IMPLIED WARRANTIES, INCLUDING ANY
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE,
++ * AND ANY WARRANTIES OF NON-INFRINGEMENT OF ANY INTELLECTUAL PROPERTY RIGHTS.
++ * IN NO EVENT SHALL SYNAPTICS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, PUNITIVE, OR CONSEQUENTIAL DAMAGES ARISING OUT OF OR IN CONNECTION
++ * WITH THE USE OF THE INFORMATION CONTAINED IN THIS DOCUMENT, HOWEVER CAUSED
++ * AND BASED ON ANY THEORY OF LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
++ * NEGLIGENCE OR OTHER TORTIOUS ACTION, AND EVEN IF SYNAPTICS WAS ADVISED OF
++ * THE POSSIBILITY OF SUCH DAMAGE. IF A TRIBUNAL OF COMPETENT JURISDICTION DOES
++ * NOT PERMIT THE DISCLAIMER OF DIRECT DAMAGES OR ANY OTHER DAMAGES, SYNAPTICS'
++ * TOTAL CUMULATIVE LIABILITY TO ANY PARTY SHALL NOT EXCEED ONE HUNDRED U.S.
++ * DOLLARS.
++ */
++
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/slab.h>
++#include <linux/interrupt.h>
++#include <linux/delay.h>
++#include <linux/input.h>
++#include <linux/platform_device.h>
++#include <linux/input/synaptics_dsx_X00TD.h>
++#include "synaptics_dsx_core.h"
++
++#define GESTURE_PHYS_NAME "synaptics_dsx_X00TD/gesture"
++
++#define TUNING_SYSFS_DIR_NAME "tuning"
++
++#define STORE_GESTURES
++#ifdef STORE_GESTURES
++#define GESTURES_TO_STORE 10
++#endif
++
++#define CTRL23_FINGER_REPORT_ENABLE_BIT 0
++#define CTRL27_UDG_ENABLE_BIT 4
++#define WAKEUP_GESTURE_MODE 0x02
++
++static ssize_t udg_sysfs_engine_enable_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count);
++
++static ssize_t udg_sysfs_detection_enable_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count);
++
++static ssize_t udg_sysfs_detection_score_show(struct device *dev,
++		struct device_attribute *attr, char *buf);
++
++static ssize_t udg_sysfs_detection_index_show(struct device *dev,
++		struct device_attribute *attr, char *buf);
++
++static ssize_t udg_sysfs_registration_enable_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count);
++
++static ssize_t udg_sysfs_registration_begin_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count);
++
++static ssize_t udg_sysfs_registration_status_show(struct device *dev,
++		struct device_attribute *attr, char *buf);
++
++static ssize_t udg_sysfs_template_size_show(struct device *dev,
++		struct device_attribute *attr, char *buf);
++
++static ssize_t udg_sysfs_template_max_index_show(struct device *dev,
++		struct device_attribute *attr, char *buf);
++
++static ssize_t udg_sysfs_template_detection_show(struct device *dev,
++		struct device_attribute *attr, char *buf);
++
++static ssize_t udg_sysfs_template_index_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count);
++
++static ssize_t udg_sysfs_template_valid_show(struct device *dev,
++		struct device_attribute *attr, char *buf);
++
++static ssize_t udg_sysfs_template_valid_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count);
++
++static ssize_t udg_sysfs_template_clear_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count);
++
++static ssize_t udg_sysfs_trace_size_show(struct device *dev,
++		struct device_attribute *attr, char *buf);
++
++static ssize_t udg_sysfs_template_data_show(struct file *data_file,
++		struct kobject *kobj, struct bin_attribute *attributes,
++		char *buf, loff_t pos, size_t count);
++
++static ssize_t udg_sysfs_template_data_store(struct file *data_file,
++		struct kobject *kobj, struct bin_attribute *attributes,
++		char *buf, loff_t pos, size_t count);
++
++static ssize_t udg_sysfs_trace_data_show(struct file *data_file,
++		struct kobject *kobj, struct bin_attribute *attributes,
++		char *buf, loff_t pos, size_t count);
++
++static ssize_t udg_sysfs_template_displacement_show(struct device *dev,
++		struct device_attribute *attr, char *buf);
++
++static ssize_t udg_sysfs_template_displacement_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count);
++
++static ssize_t udg_sysfs_rotation_invariance_show(struct device *dev,
++		struct device_attribute *attr, char *buf);
++
++static ssize_t udg_sysfs_rotation_invariance_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count);
++
++static ssize_t udg_sysfs_scale_invariance_show(struct device *dev,
++		struct device_attribute *attr, char *buf);
++
++static ssize_t udg_sysfs_scale_invariance_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count);
++
++static ssize_t udg_sysfs_threshold_factor_show(struct device *dev,
++		struct device_attribute *attr, char *buf);
++
++static ssize_t udg_sysfs_threshold_factor_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count);
++
++static ssize_t udg_sysfs_match_metric_threshold_show(struct device *dev,
++		struct device_attribute *attr, char *buf);
++
++static ssize_t udg_sysfs_match_metric_threshold_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count);
++
++static ssize_t udg_sysfs_max_inter_stroke_time_show(struct device *dev,
++		struct device_attribute *attr, char *buf);
++
++static ssize_t udg_sysfs_max_inter_stroke_time_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count);
++
++static int udg_read_tuning_params(void);
++
++static int udg_write_tuning_params(void);
++
++static int udg_detection_enable(bool enable);
++
++static int udg_engine_enable(bool enable);
++
++static int udg_set_index(unsigned char index);
++
++#ifdef STORE_GESTURES
++static int udg_read_valid_data(void);
++static int udg_write_valid_data(void);
++static int udg_read_template_data(unsigned char index);
++static int udg_write_template_data(void);
++#endif
++
++enum gesture_type {
++	DETECTION = 0x0f,
++	REGISTRATION = 0x10,
++};
++
++struct udg_tuning {
++	union {
++		struct {
++			unsigned char maximum_number_of_templates;
++			unsigned char template_size;
++			unsigned char template_disp_lsb;
++			unsigned char template_disp_msb;
++			unsigned char rotation_inv_lsb;
++			unsigned char rotation_inv_msb;
++			unsigned char scale_inv_lsb;
++			unsigned char scale_inv_msb;
++			unsigned char thres_factor_lsb;
++			unsigned char thres_factor_msb;
++			unsigned char metric_thres_lsb;
++			unsigned char metric_thres_msb;
++			unsigned char inter_stroke_lsb;
++			unsigned char inter_stroke_msb;
++		} __packed;
++		unsigned char data[14];
++	};
++};
++
++struct udg_addr {
++	unsigned short data_4;
++	unsigned short ctrl_18;
++	unsigned short ctrl_20;
++	unsigned short ctrl_23;
++	unsigned short ctrl_27;
++	unsigned short ctrl_41;
++	unsigned short trace_x;
++	unsigned short trace_y;
++	unsigned short trace_segment;
++	unsigned short template_helper;
++	unsigned short template_data;
++	unsigned short template_flags;
++};
++
++struct synaptics_rmi4_f12_query_0 {
++	union {
++		struct {
++			struct {
++				unsigned char has_register_descriptors:1;
++				unsigned char has_closed_cover:1;
++				unsigned char has_fast_glove_detect:1;
++				unsigned char has_dribble:1;
++				unsigned char has_4p4_jitter_filter_strength:1;
++				unsigned char f12_query0_s0_b5__7:3;
++			} __packed;
++			struct {
++				unsigned char max_num_templates:4;
++				unsigned char f12_query0_s1_b4__7:4;
++				unsigned char template_size_lsb;
++				unsigned char template_size_msb;
++			} __packed;
++		};
++		unsigned char data[4];
++	};
++};
++
++struct synaptics_rmi4_f12_query_5 {
++	union {
++		struct {
++			unsigned char size_of_query6;
++			struct {
++				unsigned char ctrl0_is_present:1;
++				unsigned char ctrl1_is_present:1;
++				unsigned char ctrl2_is_present:1;
++				unsigned char ctrl3_is_present:1;
++				unsigned char ctrl4_is_present:1;
++				unsigned char ctrl5_is_present:1;
++				unsigned char ctrl6_is_present:1;
++				unsigned char ctrl7_is_present:1;
++			} __packed;
++			struct {
++				unsigned char ctrl8_is_present:1;
++				unsigned char ctrl9_is_present:1;
++				unsigned char ctrl10_is_present:1;
++				unsigned char ctrl11_is_present:1;
++				unsigned char ctrl12_is_present:1;
++				unsigned char ctrl13_is_present:1;
++				unsigned char ctrl14_is_present:1;
++				unsigned char ctrl15_is_present:1;
++			} __packed;
++			struct {
++				unsigned char ctrl16_is_present:1;
++				unsigned char ctrl17_is_present:1;
++				unsigned char ctrl18_is_present:1;
++				unsigned char ctrl19_is_present:1;
++				unsigned char ctrl20_is_present:1;
++				unsigned char ctrl21_is_present:1;
++				unsigned char ctrl22_is_present:1;
++				unsigned char ctrl23_is_present:1;
++			} __packed;
++			struct {
++				unsigned char ctrl24_is_present:1;
++				unsigned char ctrl25_is_present:1;
++				unsigned char ctrl26_is_present:1;
++				unsigned char ctrl27_is_present:1;
++				unsigned char ctrl28_is_present:1;
++				unsigned char ctrl29_is_present:1;
++				unsigned char ctrl30_is_present:1;
++				unsigned char ctrl31_is_present:1;
++			} __packed;
++			struct {
++				unsigned char ctrl32_is_present:1;
++				unsigned char ctrl33_is_present:1;
++				unsigned char ctrl34_is_present:1;
++				unsigned char ctrl35_is_present:1;
++				unsigned char ctrl36_is_present:1;
++				unsigned char ctrl37_is_present:1;
++				unsigned char ctrl38_is_present:1;
++				unsigned char ctrl39_is_present:1;
++			} __packed;
++			struct {
++				unsigned char ctrl40_is_present:1;
++				unsigned char ctrl41_is_present:1;
++				unsigned char ctrl42_is_present:1;
++				unsigned char ctrl43_is_present:1;
++				unsigned char ctrl44_is_present:1;
++				unsigned char ctrl45_is_present:1;
++				unsigned char ctrl46_is_present:1;
++				unsigned char ctrl47_is_present:1;
++			} __packed;
++		};
++		unsigned char data[7];
++	};
++};
++
++struct synaptics_rmi4_f12_query_8 {
++	union {
++		struct {
++			unsigned char size_of_query9;
++			struct {
++				unsigned char data0_is_present:1;
++				unsigned char data1_is_present:1;
++				unsigned char data2_is_present:1;
++				unsigned char data3_is_present:1;
++				unsigned char data4_is_present:1;
++				unsigned char data5_is_present:1;
++				unsigned char data6_is_present:1;
++				unsigned char data7_is_present:1;
++			} __packed;
++			struct {
++				unsigned char data8_is_present:1;
++				unsigned char data9_is_present:1;
++				unsigned char data10_is_present:1;
++				unsigned char data11_is_present:1;
++				unsigned char data12_is_present:1;
++				unsigned char data13_is_present:1;
++				unsigned char data14_is_present:1;
++				unsigned char data15_is_present:1;
++			} __packed;
++			struct {
++				unsigned char data16_is_present:1;
++				unsigned char data17_is_present:1;
++				unsigned char data18_is_present:1;
++				unsigned char data19_is_present:1;
++				unsigned char data20_is_present:1;
++				unsigned char data21_is_present:1;
++				unsigned char data22_is_present:1;
++				unsigned char data23_is_present:1;
++			} __packed;
++		};
++		unsigned char data[4];
++	};
++};
++
++struct synaptics_rmi4_f12_control_41 {
++	union {
++		struct {
++			unsigned char enable_registration:1;
++			unsigned char template_index:4;
++			unsigned char begin:1;
++			unsigned char f12_ctrl41_b6__7:2;
++		} __packed;
++		unsigned char data[1];
++	};
++};
++
++struct synaptics_rmi4_udg_handle {
++	atomic_t attn_event;
++	unsigned char intr_mask;
++	unsigned char report_flags;
++	unsigned char object_type_enable1;
++	unsigned char object_type_enable2;
++	unsigned char trace_size;
++	unsigned char template_index;
++	unsigned char max_num_templates;
++	unsigned char detection_score;
++	unsigned char detection_index;
++	unsigned char detection_status;
++	unsigned char registration_status;
++	unsigned char *ctrl_buf;
++	unsigned char *trace_data_buf;
++	unsigned char *template_data_buf;
++#ifdef STORE_GESTURES
++	unsigned char gestures_to_store;
++	unsigned char *storage_buf;
++	unsigned char valid_buf[2];
++#endif
++	unsigned short trace_data_buf_size;
++	unsigned short template_size;
++	unsigned short template_data_size;
++	unsigned short query_base_addr;
++	unsigned short control_base_addr;
++	unsigned short data_base_addr;
++	unsigned short command_base_addr;
++	unsigned short ctrl_18_sub10_off;
++	unsigned short ctrl_20_sub1_off;
++	unsigned short ctrl_23_sub3_off;
++	unsigned short ctrl_27_sub5_off;
++	struct input_dev *udg_dev;
++	struct kobject *tuning_dir;
++	struct udg_addr addr;
++	struct udg_tuning tuning;
++	struct synaptics_rmi4_data *rmi4_data;
++};
++
++static struct device_attribute attrs[] = {
++	__ATTR(engine_enable, (S_IWUSR | S_IWGRP),
++			synaptics_rmi4_show_error,
++			udg_sysfs_engine_enable_store),
++	__ATTR(detection_enable, (S_IWUSR | S_IWGRP),
++			synaptics_rmi4_show_error,
++			udg_sysfs_detection_enable_store),
++	__ATTR(detection_score, S_IRUGO,
++			udg_sysfs_detection_score_show,
++			synaptics_rmi4_store_error),
++	__ATTR(detection_index, S_IRUGO,
++			udg_sysfs_detection_index_show,
++			synaptics_rmi4_store_error),
++	__ATTR(registration_enable, (S_IWUSR | S_IWGRP),
++			synaptics_rmi4_show_error,
++			udg_sysfs_registration_enable_store),
++	__ATTR(registration_begin, (S_IWUSR | S_IWGRP),
++			synaptics_rmi4_show_error,
++			udg_sysfs_registration_begin_store),
++	__ATTR(registration_status, S_IRUGO,
++			udg_sysfs_registration_status_show,
++			synaptics_rmi4_store_error),
++	__ATTR(template_size, S_IRUGO,
++			udg_sysfs_template_size_show,
++			synaptics_rmi4_store_error),
++	__ATTR(template_max_index, S_IRUGO,
++			udg_sysfs_template_max_index_show,
++			synaptics_rmi4_store_error),
++	__ATTR(template_detection, S_IRUGO,
++			udg_sysfs_template_detection_show,
++			synaptics_rmi4_store_error),
++	__ATTR(template_index, (S_IWUSR | S_IWGRP),
++			synaptics_rmi4_show_error,
++			udg_sysfs_template_index_store),
++	__ATTR(template_valid, (S_IRUGO | S_IWUSR | S_IWGRP),
++			udg_sysfs_template_valid_show,
++			udg_sysfs_template_valid_store),
++	__ATTR(template_clear, (S_IWUSR | S_IWGRP),
++			synaptics_rmi4_show_error,
++			udg_sysfs_template_clear_store),
++	__ATTR(trace_size, S_IRUGO,
++			udg_sysfs_trace_size_show,
++			synaptics_rmi4_store_error),
++};
++
++static struct bin_attribute template_data = {
++	.attr = {
++		.name = "template_data",
++		.mode = (S_IRUGO | S_IWUSR | S_IWGRP),
++	},
++	.size = 0,
++	.read = udg_sysfs_template_data_show,
++	.write = udg_sysfs_template_data_store,
++};
++
++static struct bin_attribute trace_data = {
++	.attr = {
++		.name = "trace_data",
++		.mode = S_IRUGO,
++	},
++	.size = 0,
++	.read = udg_sysfs_trace_data_show,
++	.write = NULL,
++};
++
++static struct device_attribute params[] = {
++	__ATTR(template_displacement, (S_IRUGO | S_IWUSR | S_IWGRP),
++			udg_sysfs_template_displacement_show,
++			udg_sysfs_template_displacement_store),
++	__ATTR(rotation_invariance, (S_IRUGO | S_IWUSR | S_IWGRP),
++			udg_sysfs_rotation_invariance_show,
++			udg_sysfs_rotation_invariance_store),
++	__ATTR(scale_invariance, (S_IRUGO | S_IWUSR | S_IWGRP),
++			udg_sysfs_scale_invariance_show,
++			udg_sysfs_scale_invariance_store),
++	__ATTR(threshold_factor, (S_IRUGO | S_IWUSR | S_IWGRP),
++			udg_sysfs_threshold_factor_show,
++			udg_sysfs_threshold_factor_store),
++	__ATTR(match_metric_threshold, (S_IRUGO | S_IWUSR | S_IWGRP),
++			udg_sysfs_match_metric_threshold_show,
++			udg_sysfs_match_metric_threshold_store),
++	__ATTR(max_inter_stroke_time, (S_IRUGO | S_IWUSR | S_IWGRP),
++			udg_sysfs_max_inter_stroke_time_show,
++			udg_sysfs_max_inter_stroke_time_store),
++};
++
++static struct synaptics_rmi4_udg_handle *udg;
++
++static unsigned char ctrl_18_sub_size[] = {10, 10, 10, 2, 3, 4, 3, 3, 1, 1};
++static unsigned char ctrl_20_sub_size[] = {2};
++static unsigned char ctrl_23_sub_size[] = {1, 1, 1};
++static unsigned char ctrl_27_sub_size[] = {1, 5, 2, 1, 7};
++
++DECLARE_COMPLETION(udg_remove_complete);
++
++static ssize_t udg_sysfs_engine_enable_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	int retval;
++	bool enable;
++	unsigned int input;
++
++	if (sscanf(buf, "%u", &input) != 1)
++		return -EINVAL;
++
++	if (input == 1)
++		enable = true;
++	else if (input == 0)
++		enable = false;
++	else
++		return -EINVAL;
++
++	retval = udg_engine_enable(enable);
++	if (retval < 0)
++		return retval;
++
++	return count;
++}
++
++static ssize_t udg_sysfs_detection_enable_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	int retval;
++	bool enable;
++	unsigned int input;
++
++	if (sscanf(buf, "%u", &input) != 1)
++		return -EINVAL;
++
++	if (input == 1)
++		enable = true;
++	else if (input == 0)
++		enable = false;
++	else
++		return -EINVAL;
++
++	udg->detection_status = 0;
++
++	retval = udg_detection_enable(enable);
++	if (retval < 0)
++		return retval;
++
++	return count;
++}
++
++static ssize_t udg_sysfs_detection_score_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	return snprintf(buf, PAGE_SIZE, "%u\n", udg->detection_score);
++}
++
++static ssize_t udg_sysfs_detection_index_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	return snprintf(buf, PAGE_SIZE, "%u\n", udg->detection_index);
++}
++
++static ssize_t udg_sysfs_registration_enable_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	int retval;
++	bool enable;
++	unsigned int input;
++	struct synaptics_rmi4_f12_control_41 control_41;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	if (sscanf(buf, "%u", &input) != 1)
++		return -EINVAL;
++
++	if (input == 1)
++		enable = true;
++	else if (input == 0)
++		enable = false;
++	else
++		return -EINVAL;
++
++	if (enable) {
++		retval = synaptics_rmi4_reg_read(rmi4_data,
++				udg->addr.ctrl_23,
++				udg->ctrl_buf,
++				udg->ctrl_23_sub3_off + 1);
++		if (retval < 0)
++			return retval;
++
++		udg->ctrl_buf[0] = 0;
++		udg->ctrl_buf[0] |= (1 << CTRL23_FINGER_REPORT_ENABLE_BIT);
++		if (udg->ctrl_23_sub3_off)
++			udg->ctrl_buf[udg->ctrl_23_sub3_off] = 0;
++
++		retval = synaptics_rmi4_reg_write(rmi4_data,
++				udg->addr.ctrl_23,
++				udg->ctrl_buf,
++				udg->ctrl_23_sub3_off + 1);
++		if (retval < 0)
++			return retval;
++	} else {
++		retval = synaptics_rmi4_reg_read(rmi4_data,
++				udg->addr.ctrl_23,
++				udg->ctrl_buf,
++				udg->ctrl_23_sub3_off + 1);
++		if (retval < 0)
++			return retval;
++
++		udg->ctrl_buf[0] = udg->object_type_enable1;
++		if (udg->ctrl_23_sub3_off) {
++			udg->ctrl_buf[udg->ctrl_23_sub3_off] =
++					udg->object_type_enable2;
++		}
++
++		retval = synaptics_rmi4_reg_write(rmi4_data,
++				udg->addr.ctrl_23,
++				udg->ctrl_buf,
++				udg->ctrl_23_sub3_off + 1);
++		if (retval < 0)
++			return retval;
++	}
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->addr.ctrl_41,
++			control_41.data,
++			sizeof(control_41.data));
++	if (retval < 0)
++		return retval;
++
++	control_41.enable_registration = enable ? 1 : 0;
++
++	retval = synaptics_rmi4_reg_write(rmi4_data,
++			udg->addr.ctrl_41,
++			control_41.data,
++			sizeof(control_41.data));
++	if (retval < 0)
++		return retval;
++
++	return count;
++}
++
++static ssize_t udg_sysfs_registration_begin_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	int retval;
++	bool begin;
++	unsigned int input;
++	struct synaptics_rmi4_f12_control_41 control_41;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	if (sscanf(buf, "%u", &input) != 1)
++		return -EINVAL;
++
++	if (input == 1)
++		begin = true;
++	else if (input == 0)
++		begin = false;
++	else
++		return -EINVAL;
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->addr.ctrl_41,
++			control_41.data,
++			sizeof(control_41.data));
++	if (retval < 0)
++		return retval;
++
++	control_41.begin = begin ? 1 : 0;
++
++	retval = synaptics_rmi4_reg_write(rmi4_data,
++			udg->addr.ctrl_41,
++			control_41.data,
++			sizeof(control_41.data));
++	if (retval < 0)
++		return retval;
++
++	return count;
++}
++
++static ssize_t udg_sysfs_registration_status_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	return snprintf(buf, PAGE_SIZE, "0x%02x\n", udg->registration_status);
++}
++
++static ssize_t udg_sysfs_template_size_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	return snprintf(buf, PAGE_SIZE, "%u\n", udg->template_size);
++}
++
++static ssize_t udg_sysfs_template_max_index_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	return snprintf(buf, PAGE_SIZE, "%u\n", udg->max_num_templates - 1);
++}
++
++static ssize_t udg_sysfs_template_detection_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	int retval;
++	int attn_event;
++	unsigned char detection_status;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	attn_event = atomic_read(&udg->attn_event);
++	atomic_set(&udg->attn_event, 0);
++
++	if (attn_event == 0)
++		return snprintf(buf, PAGE_SIZE, "0\n");
++
++	if (udg->detection_status == 0) {
++		retval = synaptics_rmi4_reg_read(rmi4_data,
++				udg->addr.data_4,
++				rmi4_data->gesture_detection,
++				sizeof(rmi4_data->gesture_detection));
++		if (retval < 0)
++			return retval;
++
++		udg->detection_status = rmi4_data->gesture_detection[0];
++	}
++
++	detection_status = udg->detection_status;
++	udg->detection_status = 0;
++
++	switch (detection_status) {
++	case DETECTION:
++		udg->detection_score = rmi4_data->gesture_detection[1];
++		udg->detection_index = rmi4_data->gesture_detection[4];
++		udg->trace_size = rmi4_data->gesture_detection[3];
++		break;
++	case REGISTRATION:
++		udg->registration_status = rmi4_data->gesture_detection[1];
++		udg->trace_size = rmi4_data->gesture_detection[3];
++		break;
++	default:
++		return snprintf(buf, PAGE_SIZE, "0\n");
++	}
++
++	return snprintf(buf, PAGE_SIZE, "0x%02x\n", detection_status);
++}
++
++static ssize_t udg_sysfs_template_index_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	int retval;
++	unsigned long index;
++
++	retval = sstrtoul(buf, 10, &index);
++	if (retval)
++		return retval;
++
++	retval = udg_set_index((unsigned char)index);
++	if (retval < 0)
++		return retval;
++
++	return count;
++}
++
++static ssize_t udg_sysfs_template_valid_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	int retval;
++	unsigned char valid;
++	unsigned char offset;
++	unsigned char byte_num;
++	unsigned char template_flags[2];
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	byte_num = udg->template_index / 8;
++	offset = udg->template_index % 8;
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->addr.template_flags,
++			template_flags,
++			sizeof(template_flags));
++	if (retval < 0)
++		return retval;
++
++	valid = (template_flags[byte_num] & (1 << offset)) >> offset;
++
++	return snprintf(buf, PAGE_SIZE, "%u\n", valid);
++}
++
++static ssize_t udg_sysfs_template_valid_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	int retval;
++	unsigned long valid;
++	unsigned char offset;
++	unsigned char byte_num;
++	unsigned char template_flags[2];
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	retval = sstrtoul(buf, 10, &valid);
++	if (retval)
++		return retval;
++
++	if (valid > 0)
++		valid = 1;
++
++	byte_num = udg->template_index / 8;
++	offset = udg->template_index % 8;
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->addr.template_flags,
++			template_flags,
++			sizeof(template_flags));
++	if (retval < 0)
++		return retval;
++
++	if (valid)
++		template_flags[byte_num] |= (1 << offset);
++	else
++		template_flags[byte_num] &= ~(1 << offset);
++
++	retval = synaptics_rmi4_reg_write(rmi4_data,
++			udg->addr.template_flags,
++			template_flags,
++			sizeof(template_flags));
++	if (retval < 0)
++		return retval;
++
++#ifdef STORE_GESTURES
++	udg_read_valid_data();
++#endif
++
++	return count;
++}
++
++static ssize_t udg_sysfs_template_clear_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	int retval;
++	unsigned int input;
++	const char cmd[] = {'0', 0};
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	if (sscanf(buf, "%u", &input) != 1)
++		return -EINVAL;
++
++	if (input != 1)
++		return -EINVAL;
++
++	memset(udg->template_data_buf, 0x00, udg->template_data_size);
++
++	retval = synaptics_rmi4_reg_write(rmi4_data,
++			udg->addr.template_data,
++			udg->template_data_buf,
++			udg->template_data_size);
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to clear template data\n",
++				__func__);
++		return retval;
++	}
++
++	retval = udg_sysfs_template_valid_store(dev, attr, cmd, 1);
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to clear valid bit\n",
++				__func__);
++		return retval;
++	}
++
++#ifdef STORE_GESTURES
++	udg_read_template_data(udg->template_index);
++	udg_read_valid_data();
++#endif
++
++	return count;
++}
++
++static ssize_t udg_sysfs_trace_size_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	return snprintf(buf, PAGE_SIZE, "%u\n", udg->trace_size);
++}
++
++static ssize_t udg_sysfs_trace_data_show(struct file *data_file,
++		struct kobject *kobj, struct bin_attribute *attributes,
++		char *buf, loff_t pos, size_t count)
++{
++	int retval;
++	unsigned short index = 0;
++	unsigned short trace_data_size;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	trace_data_size = udg->trace_size * 5;
++
++	if (trace_data_size == 0)
++		return -EINVAL;
++
++	if (count < trace_data_size) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Not enough space (%d bytes) in buffer\n",
++				__func__, (unsigned int)count);
++		return -EINVAL;
++	}
++
++	if (udg->trace_data_buf_size < trace_data_size) {
++		if (udg->trace_data_buf_size)
++			kfree(udg->trace_data_buf);
++		udg->trace_data_buf = kzalloc(trace_data_size, GFP_KERNEL);
++		if (!udg->trace_data_buf) {
++			dev_err(rmi4_data->pdev->dev.parent,
++					"%s: Failed to alloc mem for trace data buffer\n",
++					__func__);
++			udg->trace_data_buf_size = 0;
++			return -ENOMEM;
++		}
++		udg->trace_data_buf_size = trace_data_size;
++	}
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->addr.trace_x,
++			&udg->trace_data_buf[index],
++			udg->trace_size * 2);
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to read trace X data\n",
++				__func__);
++		return retval;
++	} else {
++		index += udg->trace_size * 2;
++	}
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->addr.trace_y,
++			&udg->trace_data_buf[index],
++			udg->trace_size * 2);
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to read trace Y data\n",
++				__func__);
++		return retval;
++	} else {
++		index += udg->trace_size * 2;
++	}
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->addr.trace_segment,
++			&udg->trace_data_buf[index],
++			udg->trace_size);
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to read trace segment data\n",
++				__func__);
++		return retval;
++	}
++
++	retval = secure_memcpy(buf, count, udg->trace_data_buf,
++			udg->trace_data_buf_size, trace_data_size);
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to copy trace data\n",
++				__func__);
++		return retval;
++	}
++
++	return trace_data_size;
++}
++
++static ssize_t udg_sysfs_template_data_show(struct file *data_file,
++		struct kobject *kobj, struct bin_attribute *attributes,
++		char *buf, loff_t pos, size_t count)
++{
++	int retval;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	if (count < udg->template_data_size) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Not enough space (%d bytes) in buffer\n",
++				__func__, (unsigned int)count);
++		return -EINVAL;
++	}
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->addr.template_data,
++			udg->template_data_buf,
++			udg->template_data_size);
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to read template data\n",
++				__func__);
++		return retval;
++	}
++
++	retval = secure_memcpy(buf, count, udg->template_data_buf,
++			udg->template_data_size, udg->template_data_size);
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to copy template data\n",
++				__func__);
++		return retval;
++	}
++
++#ifdef STORE_GESTURES
++	udg_read_template_data(udg->template_index);
++	udg_read_valid_data();
++#endif
++
++	return udg->template_data_size;
++}
++
++static ssize_t udg_sysfs_template_data_store(struct file *data_file,
++		struct kobject *kobj, struct bin_attribute *attributes,
++		char *buf, loff_t pos, size_t count)
++{
++	int retval;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	retval = secure_memcpy(udg->template_data_buf, udg->template_data_size,
++			buf, count, count);
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to copy template data\n",
++				__func__);
++		return retval;
++	}
++
++	retval = synaptics_rmi4_reg_write(rmi4_data,
++			udg->addr.template_data,
++			udg->template_data_buf,
++			count);
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to write template data\n",
++				__func__);
++		return retval;
++	}
++
++#ifdef STORE_GESTURES
++	udg_read_template_data(udg->template_index);
++	udg_read_valid_data();
++#endif
++
++	return count;
++}
++
++static ssize_t udg_sysfs_template_displacement_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	int retval;
++	unsigned short template_displacement;
++
++	retval = udg_read_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	template_displacement =
++			((unsigned short)udg->tuning.template_disp_lsb << 0) |
++			((unsigned short)udg->tuning.template_disp_msb << 8);
++
++	return snprintf(buf, PAGE_SIZE, "%u\n", template_displacement);
++}
++
++static ssize_t udg_sysfs_template_displacement_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	int retval;
++	unsigned long input;
++
++	retval = sstrtoul(buf, 10, &input);
++	if (retval)
++		return retval;
++
++	retval = udg_read_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	udg->tuning.template_disp_lsb = (unsigned char)(input >> 0);
++	udg->tuning.template_disp_msb = (unsigned char)(input >> 8);
++
++	retval = udg_write_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	return count;
++}
++
++static ssize_t udg_sysfs_rotation_invariance_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	int retval;
++	unsigned short rotation_invariance;
++
++	retval = udg_read_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	rotation_invariance =
++			((unsigned short)udg->tuning.rotation_inv_lsb << 0) |
++			((unsigned short)udg->tuning.rotation_inv_msb << 8);
++
++	return snprintf(buf, PAGE_SIZE, "%u\n", rotation_invariance);
++}
++
++static ssize_t udg_sysfs_rotation_invariance_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	int retval;
++	unsigned long input;
++
++	retval = sstrtoul(buf, 10, &input);
++	if (retval)
++		return retval;
++
++	retval = udg_read_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	udg->tuning.rotation_inv_lsb = (unsigned char)(input >> 0);
++	udg->tuning.rotation_inv_msb = (unsigned char)(input >> 8);
++
++	retval = udg_write_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	return count;
++}
++
++static ssize_t udg_sysfs_scale_invariance_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	int retval;
++	unsigned short scale_invariance;
++
++	retval = udg_read_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	scale_invariance =
++			((unsigned short)udg->tuning.scale_inv_lsb << 0) |
++			((unsigned short)udg->tuning.scale_inv_msb << 8);
++
++	return snprintf(buf, PAGE_SIZE, "%u\n", scale_invariance);
++}
++
++static ssize_t udg_sysfs_scale_invariance_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	int retval;
++	unsigned long input;
++
++	retval = sstrtoul(buf, 10, &input);
++	if (retval)
++		return retval;
++
++	retval = udg_read_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	udg->tuning.scale_inv_lsb = (unsigned char)(input >> 0);
++	udg->tuning.scale_inv_msb = (unsigned char)(input >> 8);
++
++	retval = udg_write_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	return count;
++}
++
++static ssize_t udg_sysfs_threshold_factor_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	int retval;
++	unsigned short threshold_factor;
++
++	retval = udg_read_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	threshold_factor =
++			((unsigned short)udg->tuning.thres_factor_lsb << 0) |
++			((unsigned short)udg->tuning.thres_factor_msb << 8);
++
++	return snprintf(buf, PAGE_SIZE, "%u\n", threshold_factor);
++}
++
++static ssize_t udg_sysfs_threshold_factor_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	int retval;
++	unsigned long input;
++
++	retval = sstrtoul(buf, 10, &input);
++	if (retval)
++		return retval;
++
++	retval = udg_read_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	udg->tuning.thres_factor_lsb = (unsigned char)(input >> 0);
++	udg->tuning.thres_factor_msb = (unsigned char)(input >> 8);
++
++	retval = udg_write_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	return count;
++}
++
++static ssize_t udg_sysfs_match_metric_threshold_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	int retval;
++	unsigned short match_metric_threshold;
++
++	retval = udg_read_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	match_metric_threshold =
++			((unsigned short)udg->tuning.metric_thres_lsb << 0) |
++			((unsigned short)udg->tuning.metric_thres_msb << 8);
++
++	return snprintf(buf, PAGE_SIZE, "%u\n", match_metric_threshold);
++}
++
++static ssize_t udg_sysfs_match_metric_threshold_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	int retval;
++	unsigned long input;
++
++	retval = sstrtoul(buf, 10, &input);
++	if (retval)
++		return retval;
++
++	retval = udg_read_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	udg->tuning.metric_thres_lsb = (unsigned char)(input >> 0);
++	udg->tuning.metric_thres_msb = (unsigned char)(input >> 8);
++
++	retval = udg_write_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	return count;
++}
++
++static ssize_t udg_sysfs_max_inter_stroke_time_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	int retval;
++	unsigned short max_inter_stroke_time;
++
++	retval = udg_read_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	max_inter_stroke_time =
++			((unsigned short)udg->tuning.inter_stroke_lsb << 0) |
++			((unsigned short)udg->tuning.inter_stroke_msb << 8);
++
++	return snprintf(buf, PAGE_SIZE, "%u\n", max_inter_stroke_time);
++}
++
++static ssize_t udg_sysfs_max_inter_stroke_time_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	int retval;
++	unsigned long input;
++
++	retval = sstrtoul(buf, 10, &input);
++	if (retval)
++		return retval;
++
++	retval = udg_read_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	udg->tuning.inter_stroke_lsb = (unsigned char)(input >> 0);
++	udg->tuning.inter_stroke_msb = (unsigned char)(input >> 8);
++
++	retval = udg_write_tuning_params();
++	if (retval < 0)
++		return retval;
++
++	return count;
++}
++
++static int udg_ctrl_subpacket(unsigned char ctrlreg,
++		unsigned char subpacket,
++		struct synaptics_rmi4_f12_query_5 *query_5)
++{
++	int retval;
++	unsigned char cnt;
++	unsigned char regnum;
++	unsigned char bitnum;
++	unsigned char q5_index;
++	unsigned char q6_index;
++	unsigned char offset;
++	unsigned char max_ctrlreg;
++	unsigned char *query_6;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	max_ctrlreg = (sizeof(query_5->data) - 1) * 8 - 1;
++
++	if (ctrlreg > max_ctrlreg) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Control register number (%d) over limit\n",
++				__func__, ctrlreg);
++		return -EINVAL;
++	}
++
++	q5_index = ctrlreg / 8 + 1;
++	bitnum = ctrlreg % 8;
++	if ((query_5->data[q5_index] & (1 << bitnum)) == 0x00) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Control %d is not present\n",
++				__func__, ctrlreg);
++		return -EINVAL;
++	}
++
++	query_6 = kmalloc(query_5->size_of_query6, GFP_KERNEL);
++	if (!query_6) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to alloc mem for query 6\n",
++				__func__);
++		return -ENOMEM;
++	}
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->query_base_addr + 6,
++			query_6,
++			query_5->size_of_query6);
++	if (retval < 0)
++		goto exit;
++
++	q6_index = 0;
++
++	for (regnum = 0; regnum < ctrlreg; regnum++) {
++		q5_index = regnum / 8 + 1;
++		bitnum = regnum % 8;
++		if ((query_5->data[q5_index] & (1 << bitnum)) == 0x00)
++			continue;
++
++		if (query_6[q6_index] == 0x00)
++			q6_index += 3;
++		else
++			q6_index++;
++
++		while (query_6[q6_index] & ~MASK_7BIT)
++			q6_index++;
++
++		q6_index++;
++	}
++
++	cnt = 0;
++	q6_index++;
++	offset = subpacket / 7;
++	bitnum = subpacket % 7;
++
++	do {
++		if (cnt == offset) {
++			if (query_6[q6_index + cnt] & (1 << bitnum))
++				retval = 1;
++			else
++				retval = 0;
++			goto exit;
++		}
++		cnt++;
++	} while (query_6[q6_index + cnt - 1] & ~MASK_7BIT);
++
++	retval = 0;
++
++exit:
++	kfree(query_6);
++
++	return retval;
++}
++
++static int udg_read_tuning_params(void)
++{
++	int retval;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->addr.ctrl_18,
++			udg->ctrl_buf,
++			udg->ctrl_18_sub10_off + sizeof(struct udg_tuning));
++	if (retval < 0)
++		return retval;
++
++	secure_memcpy(udg->tuning.data,
++			sizeof(udg->tuning.data),
++			(unsigned char *)&udg->ctrl_buf[udg->ctrl_18_sub10_off],
++			sizeof(struct udg_tuning),
++			sizeof(struct udg_tuning));
++
++	return 0;
++}
++
++static int udg_write_tuning_params(void)
++{
++	int retval;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	secure_memcpy((unsigned char *)&udg->ctrl_buf[udg->ctrl_18_sub10_off],
++			sizeof(struct udg_tuning),
++			udg->tuning.data,
++			sizeof(udg->tuning.data),
++			sizeof(struct udg_tuning));
++
++	retval = synaptics_rmi4_reg_write(rmi4_data,
++			udg->addr.ctrl_18,
++			udg->ctrl_buf,
++			udg->ctrl_18_sub10_off + sizeof(struct udg_tuning));
++	if (retval < 0)
++		return retval;
++
++	return 0;
++}
++
++static int udg_detection_enable(bool enable)
++{
++	int retval;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->addr.ctrl_20,
++			udg->ctrl_buf,
++			udg->ctrl_20_sub1_off + 1);
++	if (retval < 0)
++		return retval;
++
++	if (enable)
++		udg->ctrl_buf[udg->ctrl_20_sub1_off] = WAKEUP_GESTURE_MODE;
++	else
++		udg->ctrl_buf[udg->ctrl_20_sub1_off] = udg->report_flags;
++
++	retval = synaptics_rmi4_reg_write(rmi4_data,
++			udg->addr.ctrl_20,
++			udg->ctrl_buf,
++			udg->ctrl_20_sub1_off + 1);
++	if (retval < 0)
++		return retval;
++
++	return 0;
++}
++
++static int udg_engine_enable(bool enable)
++{
++	int retval;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	if (enable) {
++		retval = synaptics_rmi4_reg_read(rmi4_data,
++				udg->addr.ctrl_27,
++				udg->ctrl_buf,
++				udg->ctrl_27_sub5_off + 1);
++		if (retval < 0)
++			return retval;
++
++		udg->ctrl_buf[udg->ctrl_27_sub5_off] |=
++				(1 << CTRL27_UDG_ENABLE_BIT);
++
++		retval = synaptics_rmi4_reg_write(rmi4_data,
++				udg->addr.ctrl_27,
++				udg->ctrl_buf,
++				udg->ctrl_27_sub5_off + 1);
++		if (retval < 0)
++			return retval;
++	} else {
++		retval = synaptics_rmi4_reg_read(rmi4_data,
++				udg->addr.ctrl_27,
++				udg->ctrl_buf,
++				udg->ctrl_27_sub5_off + 1);
++		if (retval < 0)
++			return retval;
++
++		udg->ctrl_buf[udg->ctrl_27_sub5_off] &=
++				~(1 << CTRL27_UDG_ENABLE_BIT);
++
++		retval = synaptics_rmi4_reg_write(rmi4_data,
++				udg->addr.ctrl_27,
++				udg->ctrl_buf,
++				udg->ctrl_27_sub5_off + 1);
++		if (retval < 0)
++			return retval;
++	}
++
++	return 0;
++}
++
++static void udg_report(void)
++{
++	int retval;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	atomic_set(&udg->attn_event, 1);
++
++	if (rmi4_data->suspend) {
++		if (rmi4_data->gesture_detection[0] == 0) {
++			retval = synaptics_rmi4_reg_read(rmi4_data,
++					udg->addr.data_4,
++					rmi4_data->gesture_detection,
++					sizeof(rmi4_data->gesture_detection));
++			if (retval < 0) {
++				dev_err(rmi4_data->pdev->dev.parent,
++						"%s: Failed to read gesture detection\n",
++						__func__);
++				return;
++			}
++		}
++
++		udg->detection_status = rmi4_data->gesture_detection[0];
++		rmi4_data->gesture_detection[0] = 0;
++
++		if (udg->detection_status == DETECTION) {
++			input_report_key(udg->udg_dev, KEY_WAKEUP, 1);
++			input_sync(udg->udg_dev);
++			input_report_key(udg->udg_dev, KEY_WAKEUP, 0);
++			input_sync(udg->udg_dev);
++			rmi4_data->suspend = false;
++		}
++	}
++
++	return;
++}
++
++static int udg_set_index(unsigned char index)
++{
++	int retval;
++	struct synaptics_rmi4_f12_control_41 control_41;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	if (index >= udg->max_num_templates)
++		return -EINVAL;
++
++	udg->template_index = index;
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->addr.ctrl_41,
++			control_41.data,
++			sizeof(control_41.data));
++	if (retval < 0)
++		return retval;
++
++	control_41.template_index = udg->template_index;
++
++	retval = synaptics_rmi4_reg_write(rmi4_data,
++			udg->addr.ctrl_41,
++			control_41.data,
++			sizeof(control_41.data));
++	if (retval < 0)
++		return retval;
++
++	return 0;
++}
++
++#ifdef STORE_GESTURES
++static int udg_read_valid_data(void)
++{
++	int retval;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->addr.template_flags,
++			udg->valid_buf,
++			sizeof(udg->valid_buf));
++	if (retval < 0)
++		return retval;
++
++	return 0;
++}
++
++static int udg_write_valid_data(void)
++{
++	int retval;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	retval = synaptics_rmi4_reg_write(rmi4_data,
++			udg->addr.template_flags,
++			udg->valid_buf,
++			sizeof(udg->valid_buf));
++	if (retval < 0)
++		return retval;
++
++	return 0;
++}
++
++static int udg_read_template_data(unsigned char index)
++{
++	int retval;
++	unsigned char *storage;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	udg_set_index(index);
++	storage = &(udg->storage_buf[index * udg->template_data_size]);
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->addr.template_data,
++			storage,
++			udg->template_data_size);
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to read template data\n",
++				__func__);
++		return retval;
++	}
++
++	return 0;
++}
++
++static int udg_write_template_data(void)
++{
++	int retval;
++	unsigned char ii;
++	unsigned char *storage;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	for (ii = 0; ii < udg->gestures_to_store; ii++) {
++		udg_set_index(ii);
++		storage = &(udg->storage_buf[ii * udg->template_data_size]);
++
++		retval = synaptics_rmi4_reg_write(rmi4_data,
++				udg->addr.template_data,
++				storage,
++				udg->template_data_size);
++		if (retval < 0) {
++			dev_err(rmi4_data->pdev->dev.parent,
++					"%s: Failed to write template data\n",
++					__func__);
++			return retval;
++		}
++	}
++
++	return 0;
++}
++#endif
++
++static int udg_reg_init(void)
++{
++	int retval;
++	unsigned char ii;
++	unsigned char data_offset;
++	unsigned char size_of_query;
++	unsigned char ctrl_18_offset;
++	unsigned char ctrl_20_offset;
++	unsigned char ctrl_23_offset;
++	unsigned char ctrl_27_offset;
++	unsigned char ctrl_41_offset;
++	struct synaptics_rmi4_f12_query_0 query_0;
++	struct synaptics_rmi4_f12_query_5 query_5;
++	struct synaptics_rmi4_f12_query_8 query_8;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->query_base_addr + 7,
++			&size_of_query,
++			sizeof(size_of_query));
++	if (retval < 0)
++		return retval;
++
++	if (size_of_query < 4) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: User defined gesture support unavailable (missing data registers)\n",
++				__func__);
++		retval = -ENODEV;
++		return retval;
++	}
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->query_base_addr + 8,
++			query_8.data,
++			sizeof(query_8.data));
++	if (retval < 0)
++		return retval;
++
++	if ((query_8.data16_is_present) &&
++			(query_8.data17_is_present) &&
++			(query_8.data18_is_present) &&
++			(query_8.data19_is_present) &&
++			(query_8.data20_is_present) &&
++			(query_8.data21_is_present)) {
++		data_offset = query_8.data0_is_present +
++				query_8.data1_is_present +
++				query_8.data2_is_present +
++				query_8.data3_is_present;
++		udg->addr.data_4 = udg->data_base_addr + data_offset;
++		data_offset = data_offset +
++				query_8.data4_is_present +
++				query_8.data5_is_present +
++				query_8.data6_is_present +
++				query_8.data7_is_present +
++				query_8.data8_is_present +
++				query_8.data9_is_present +
++				query_8.data10_is_present +
++				query_8.data11_is_present +
++				query_8.data12_is_present +
++				query_8.data13_is_present +
++				query_8.data14_is_present +
++				query_8.data15_is_present;
++		udg->addr.trace_x = udg->data_base_addr + data_offset;
++		udg->addr.trace_y = udg->addr.trace_x + 1;
++		udg->addr.trace_segment = udg->addr.trace_y + 1;
++		udg->addr.template_helper = udg->addr.trace_segment + 1;
++		udg->addr.template_data = udg->addr.template_helper + 1;
++		udg->addr.template_flags = udg->addr.template_data + 1;
++	} else {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: User defined gesture support unavailable (missing data registers)\n",
++				__func__);
++		retval = -ENODEV;
++		return retval;
++	}
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->query_base_addr + 4,
++			&size_of_query,
++			sizeof(size_of_query));
++	if (retval < 0)
++		return retval;
++
++	if (size_of_query < 7) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: User defined gesture support unavailable (missing control registers)\n",
++				__func__);
++		retval = -ENODEV;
++		return retval;
++	}
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->query_base_addr + 5,
++			query_5.data,
++			sizeof(query_5.data));
++	if (retval < 0)
++		return retval;
++
++	ctrl_18_offset = query_5.ctrl0_is_present +
++			query_5.ctrl1_is_present +
++			query_5.ctrl2_is_present +
++			query_5.ctrl3_is_present +
++			query_5.ctrl4_is_present +
++			query_5.ctrl5_is_present +
++			query_5.ctrl6_is_present +
++			query_5.ctrl7_is_present +
++			query_5.ctrl8_is_present +
++			query_5.ctrl9_is_present +
++			query_5.ctrl10_is_present +
++			query_5.ctrl11_is_present +
++			query_5.ctrl12_is_present +
++			query_5.ctrl13_is_present +
++			query_5.ctrl14_is_present +
++			query_5.ctrl15_is_present +
++			query_5.ctrl16_is_present +
++			query_5.ctrl17_is_present;
++
++	ctrl_20_offset = ctrl_18_offset +
++			query_5.ctrl18_is_present +
++			query_5.ctrl19_is_present;
++
++	ctrl_23_offset = ctrl_20_offset +
++			query_5.ctrl20_is_present +
++			query_5.ctrl21_is_present +
++			query_5.ctrl22_is_present;
++
++	ctrl_27_offset = ctrl_23_offset+
++			query_5.ctrl23_is_present +
++			query_5.ctrl24_is_present +
++			query_5.ctrl25_is_present +
++			query_5.ctrl26_is_present;
++
++	ctrl_41_offset = ctrl_27_offset+
++			query_5.ctrl27_is_present +
++			query_5.ctrl28_is_present +
++			query_5.ctrl29_is_present +
++			query_5.ctrl30_is_present +
++			query_5.ctrl31_is_present +
++			query_5.ctrl32_is_present +
++			query_5.ctrl33_is_present +
++			query_5.ctrl34_is_present +
++			query_5.ctrl35_is_present +
++			query_5.ctrl36_is_present +
++			query_5.ctrl37_is_present +
++			query_5.ctrl38_is_present +
++			query_5.ctrl39_is_present +
++			query_5.ctrl40_is_present;
++
++	udg->addr.ctrl_18 = udg->control_base_addr + ctrl_18_offset;
++	udg->addr.ctrl_20 = udg->control_base_addr + ctrl_20_offset;
++	udg->addr.ctrl_23 = udg->control_base_addr + ctrl_23_offset;
++	udg->addr.ctrl_27 = udg->control_base_addr + ctrl_27_offset;
++	udg->addr.ctrl_41 = udg->control_base_addr + ctrl_41_offset;
++
++	udg->ctrl_18_sub10_off = 0;
++	for (ii = 0; ii < 10; ii++) {
++		retval = udg_ctrl_subpacket(18, ii, &query_5);
++		if (retval == 1)
++			udg->ctrl_18_sub10_off += ctrl_18_sub_size[ii];
++		else if (retval < 0)
++			return retval;
++	}
++
++	udg->ctrl_20_sub1_off = 0;
++	for (ii = 0; ii < 1; ii++) {
++		retval = udg_ctrl_subpacket(20, ii, &query_5);
++		if (retval == 1)
++			udg->ctrl_20_sub1_off += ctrl_20_sub_size[ii];
++		else if (retval < 0)
++			return retval;
++	}
++
++	udg->ctrl_23_sub3_off = 0;
++	for (ii = 0; ii < 3; ii++) {
++		retval = udg_ctrl_subpacket(23, ii, &query_5);
++		if (retval == 1)
++			udg->ctrl_23_sub3_off += ctrl_23_sub_size[ii];
++		else if (retval < 0)
++			return retval;
++	}
++
++	retval = udg_ctrl_subpacket(23, 3, &query_5);
++	if (retval == 0)
++		udg->ctrl_23_sub3_off = 0;
++	else if (retval < 0)
++		return retval;
++
++	udg->ctrl_27_sub5_off = 0;
++	for (ii = 0; ii < 5; ii++) {
++		retval = udg_ctrl_subpacket(27, ii, &query_5);
++		if (retval == 1)
++			udg->ctrl_27_sub5_off += ctrl_27_sub_size[ii];
++		else if (retval < 0)
++			return retval;
++	}
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->query_base_addr + 0,
++			query_0.data,
++			sizeof(query_0.data));
++	if (retval < 0)
++		return retval;
++
++	udg->max_num_templates = query_0.max_num_templates;
++	udg->template_size =
++			((unsigned short)query_0.template_size_lsb << 0) |
++			((unsigned short)query_0.template_size_msb << 8);
++	udg->template_data_size = udg->template_size * 4 * 2 + 4 + 1;
++
++#ifdef STORE_GESTURES
++	udg->gestures_to_store = udg->max_num_templates;
++	if (GESTURES_TO_STORE < udg->gestures_to_store)
++		udg->gestures_to_store = GESTURES_TO_STORE;
++#endif
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->addr.ctrl_20,
++			udg->ctrl_buf,
++			udg->ctrl_20_sub1_off + 1);
++	if (retval < 0)
++		return retval;
++
++	udg->report_flags = udg->ctrl_buf[udg->ctrl_20_sub1_off];
++
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			udg->addr.ctrl_23,
++			udg->ctrl_buf,
++			udg->ctrl_23_sub3_off + 1);
++	if (retval < 0)
++		return retval;
++
++	udg->object_type_enable1 = udg->ctrl_buf[0];
++	if (udg->ctrl_23_sub3_off)
++		udg->object_type_enable2 = udg->ctrl_buf[udg->ctrl_23_sub3_off];
++
++	return retval;
++}
++
++static int udg_scan_pdt(void)
++{
++	int retval;
++	unsigned char ii;
++	unsigned char page;
++	unsigned char intr_count = 0;
++	unsigned char intr_off;
++	unsigned char intr_src;
++	unsigned short addr;
++	struct synaptics_rmi4_fn_desc fd;
++	struct synaptics_rmi4_data *rmi4_data = udg->rmi4_data;
++
++	for (page = 0; page < PAGES_TO_SERVICE; page++) {
++		for (addr = PDT_START; addr > PDT_END; addr -= PDT_ENTRY_SIZE) {
++			addr |= (page << 8);
++
++			retval = synaptics_rmi4_reg_read(rmi4_data,
++					addr,
++					(unsigned char *)&fd,
++					sizeof(fd));
++			if (retval < 0)
++				return retval;
++
++			addr &= ~(MASK_8BIT << 8);
++
++			if (fd.fn_number) {
++				dev_dbg(rmi4_data->pdev->dev.parent,
++						"%s: Found F%02x\n",
++						__func__, fd.fn_number);
++				switch (fd.fn_number) {
++				case SYNAPTICS_RMI4_F12:
++					goto f12_found;
++					break;
++				}
++			} else {
++				break;
++			}
++
++			intr_count += fd.intr_src_count;
++		}
++	}
++
++	dev_err(rmi4_data->pdev->dev.parent,
++			"%s: Failed to find F12\n",
++			__func__);
++	return -EINVAL;
++
++f12_found:
++	udg->query_base_addr = fd.query_base_addr | (page << 8);
++	udg->control_base_addr = fd.ctrl_base_addr | (page << 8);
++	udg->data_base_addr = fd.data_base_addr | (page << 8);
++	udg->command_base_addr = fd.cmd_base_addr | (page << 8);
++
++	retval = udg_reg_init();
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to initialize user defined gesture registers\n",
++				__func__);
++		return retval;
++	}
++
++	udg->intr_mask = 0;
++	intr_src = fd.intr_src_count;
++	intr_off = intr_count % 8;
++	for (ii = intr_off;
++			ii < (intr_src + intr_off);
++			ii++) {
++		udg->intr_mask |= 1 << ii;
++	}
++
++	rmi4_data->intr_mask[0] |= udg->intr_mask;
++
++	addr = rmi4_data->f01_ctrl_base_addr + 1;
++
++	retval = synaptics_rmi4_reg_write(rmi4_data,
++			addr,
++			&rmi4_data->intr_mask[0],
++			sizeof(rmi4_data->intr_mask[0]));
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to set interrupt enable bit\n",
++				__func__);
++		return retval;
++	}
++
++	return 0;
++}
++
++static void synaptics_rmi4_udg_attn(struct synaptics_rmi4_data *rmi4_data,
++		unsigned char intr_mask)
++{
++	if (!udg)
++		return;
++
++	if (udg->intr_mask & intr_mask)
++		udg_report();
++
++	return;
++}
++
++static int synaptics_rmi4_udg_init(struct synaptics_rmi4_data *rmi4_data)
++{
++	int retval;
++	unsigned char ii;
++	unsigned char size;
++	unsigned char attr_count;
++	unsigned char param_count;
++
++	if (udg) {
++		dev_dbg(rmi4_data->pdev->dev.parent,
++				"%s: Handle already exists\n",
++				__func__);
++		return 0;
++	}
++
++	udg = kzalloc(sizeof(*udg), GFP_KERNEL);
++	if (!udg) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to alloc mem for udg\n",
++				__func__);
++		retval = -ENOMEM;
++		goto exit;
++	}
++
++	size = 0;
++	for (ii = 0; ii < sizeof(ctrl_18_sub_size); ii++)
++		size += ctrl_18_sub_size[ii];
++	size += sizeof(struct udg_tuning);
++	udg->ctrl_buf = kzalloc(size, GFP_KERNEL);
++	if (!udg->ctrl_buf) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to alloc mem for ctrl_buf\n",
++				__func__);
++		retval = -ENOMEM;
++		goto exit_free_udg;
++	}
++
++	udg->rmi4_data = rmi4_data;
++
++	retval = udg_scan_pdt();
++	if (retval < 0)
++		goto exit_free_ctrl_buf;
++
++	udg->template_data_buf = kzalloc(udg->template_data_size, GFP_KERNEL);
++	if (!udg->template_data_buf) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to alloc mem for template_data_buf\n",
++				__func__);
++		retval = -ENOMEM;
++		goto exit_free_ctrl_buf;
++	}
++
++#ifdef STORE_GESTURES
++	udg->storage_buf = kzalloc(
++			udg->template_data_size * udg->gestures_to_store,
++			GFP_KERNEL);
++	if (!udg->storage_buf) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to alloc mem for storage_buf\n",
++				__func__);
++		kfree(udg->template_data_buf);
++		retval = -ENOMEM;
++		goto exit_free_ctrl_buf;
++	}
++#endif
++
++	udg->udg_dev = input_allocate_device();
++	if (udg->udg_dev == NULL) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to allocate gesture device\n",
++				__func__);
++		retval = -ENOMEM;
++		goto exit_free_template_data_buf;
++	}
++
++	udg->udg_dev->name = GESTURE_DRIVER_NAME;
++	udg->udg_dev->phys = GESTURE_PHYS_NAME;
++	udg->udg_dev->id.product = SYNAPTICS_DSX_DRIVER_PRODUCT;
++	udg->udg_dev->id.version = SYNAPTICS_DSX_DRIVER_VERSION;
++	udg->udg_dev->dev.parent = rmi4_data->pdev->dev.parent;
++	input_set_drvdata(udg->udg_dev, rmi4_data);
++
++	set_bit(EV_KEY, udg->udg_dev->evbit);
++	set_bit(KEY_WAKEUP, udg->udg_dev->keybit);
++	input_set_capability(udg->udg_dev, EV_KEY, KEY_WAKEUP);
++
++	retval = input_register_device(udg->udg_dev);
++	if (retval) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to register gesture device\n",
++				__func__);
++		input_free_device(udg->udg_dev);
++		goto exit_free_template_data_buf;
++	}
++
++	udg->tuning_dir = kobject_create_and_add(TUNING_SYSFS_DIR_NAME,
++			&udg->udg_dev->dev.kobj);
++	if (!udg->tuning_dir) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to create tuning sysfs directory\n",
++				__func__);
++		goto exit_unregister_input_device;
++	}
++
++	retval = sysfs_create_bin_file(&udg->udg_dev->dev.kobj, &template_data);
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to create template data bin file\n",
++				__func__);
++		goto exit_remove_sysfs_directory;
++	}
++
++	retval = sysfs_create_bin_file(&udg->udg_dev->dev.kobj, &trace_data);
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to create trace data bin file\n",
++				__func__);
++		goto exit_remove_bin_file;
++	}
++
++	for (attr_count = 0; attr_count < ARRAY_SIZE(attrs); attr_count++) {
++		retval = sysfs_create_file(&udg->udg_dev->dev.kobj,
++				&attrs[attr_count].attr);
++		if (retval < 0) {
++			dev_err(rmi4_data->pdev->dev.parent,
++					"%s: Failed to create sysfs attributes\n",
++					__func__);
++			retval = -ENODEV;
++			goto exit_remove_attrs;
++		}
++	}
++
++	for (param_count = 0; param_count < ARRAY_SIZE(params); param_count++) {
++		retval = sysfs_create_file(udg->tuning_dir,
++				&params[param_count].attr);
++		if (retval < 0) {
++			dev_err(rmi4_data->pdev->dev.parent,
++					"%s: Failed to create tuning parameters\n",
++					__func__);
++			retval = -ENODEV;
++			goto exit_remove_params;
++		}
++	}
++
++	retval = udg_engine_enable(true);
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to enable gesture engine\n",
++				__func__);
++		goto exit_remove_params;
++	}
++
++	return 0;
++
++exit_remove_params:
++	for (param_count--; param_count >= 0; param_count--) {
++		sysfs_remove_file(udg->tuning_dir,
++				&params[param_count].attr);
++	}
++
++exit_remove_attrs:
++	for (attr_count--; attr_count >= 0; attr_count--) {
++		sysfs_remove_file(&udg->udg_dev->dev.kobj,
++				&attrs[attr_count].attr);
++	}
++
++	sysfs_remove_bin_file(&udg->udg_dev->dev.kobj, &trace_data);
++
++exit_remove_bin_file:
++	sysfs_remove_bin_file(&udg->udg_dev->dev.kobj, &template_data);
++
++exit_remove_sysfs_directory:
++	kobject_put(udg->tuning_dir);
++
++exit_unregister_input_device:
++	input_unregister_device(udg->udg_dev);
++
++exit_free_template_data_buf:
++#ifdef STORE_GESTURES
++	kfree(udg->storage_buf);
++#endif
++	kfree(udg->template_data_buf);
++
++exit_free_ctrl_buf:
++	kfree(udg->ctrl_buf);
++
++exit_free_udg:
++	kfree(udg);
++	udg = NULL;
++
++exit:
++	return retval;
++}
++
++static void synaptics_rmi4_udg_remove(struct synaptics_rmi4_data *rmi4_data)
++{
++	unsigned char count;
++
++	if (!udg)
++		goto exit;
++
++	for (count = 0; count < ARRAY_SIZE(params); count++) {
++		sysfs_remove_file(udg->tuning_dir,
++				&params[count].attr);
++	}
++
++	for (count = 0; count < ARRAY_SIZE(attrs); count++) {
++		sysfs_remove_file(&udg->udg_dev->dev.kobj,
++				&attrs[count].attr);
++	}
++
++	sysfs_remove_bin_file(&udg->udg_dev->dev.kobj, &trace_data);
++	sysfs_remove_bin_file(&udg->udg_dev->dev.kobj, &template_data);
++	kobject_put(udg->tuning_dir);
++
++	input_unregister_device(udg->udg_dev);
++#ifdef STORE_GESTURES
++	kfree(udg->storage_buf);
++#endif
++	kfree(udg->template_data_buf);
++	kfree(udg->trace_data_buf);
++	kfree(udg->ctrl_buf);
++	kfree(udg);
++	udg = NULL;
++
++exit:
++	complete(&udg_remove_complete);
++
++	return;
++}
++
++static void synaptics_rmi4_udg_reset(struct synaptics_rmi4_data *rmi4_data)
++{
++	if (!udg) {
++		synaptics_rmi4_udg_init(rmi4_data);
++		return;
++	}
++
++	udg_scan_pdt();
++	udg_engine_enable(true);
++#ifdef STORE_GESTURES
++	udg_write_template_data();
++	udg_write_valid_data();
++#endif
++
++	return;
++}
++
++static void synaptics_rmi4_udg_reinit(struct synaptics_rmi4_data *rmi4_data)
++{
++	if (!udg)
++		return;
++
++	udg_engine_enable(true);
++#ifdef STORE_GESTURES
++	udg_write_template_data();
++	udg_write_valid_data();
++#endif
++
++	return;
++}
++
++static void synaptics_rmi4_udg_e_suspend(struct synaptics_rmi4_data *rmi4_data)
++{
++	if (!udg)
++		return;
++
++	rmi4_data->sleep_enable(rmi4_data, false);
++	rmi4_data->irq_enable(rmi4_data, true, false);
++	enable_irq_wake(rmi4_data->irq);
++
++	udg_engine_enable(true);
++	udg_detection_enable(true);
++
++	return;
++}
++
++static void synaptics_rmi4_udg_suspend(struct synaptics_rmi4_data *rmi4_data)
++{
++	if (!udg)
++		return;
++
++	rmi4_data->sleep_enable(rmi4_data, false);
++	rmi4_data->irq_enable(rmi4_data, true, false);
++	enable_irq_wake(rmi4_data->irq);
++
++	udg_engine_enable(true);
++	udg_detection_enable(true);
++
++	return;
++}
++
++static void synaptics_rmi4_udg_resume(struct synaptics_rmi4_data *rmi4_data)
++{
++	if (!udg)
++		return;
++
++	disable_irq_wake(rmi4_data->irq);
++	udg_detection_enable(false);
++
++	return;
++}
++
++static void synaptics_rmi4_udg_l_resume(struct synaptics_rmi4_data *rmi4_data)
++{
++	if (!udg)
++		return;
++
++	disable_irq_wake(rmi4_data->irq);
++	udg_detection_enable(false);
++
++	return;
++}
++
++static struct synaptics_rmi4_exp_fn gesture_module = {
++	.fn_type = RMI_GESTURE,
++	.init = synaptics_rmi4_udg_init,
++	.remove = synaptics_rmi4_udg_remove,
++	.reset = synaptics_rmi4_udg_reset,
++	.reinit = synaptics_rmi4_udg_reinit,
++	.early_suspend = synaptics_rmi4_udg_e_suspend,
++	.suspend = synaptics_rmi4_udg_suspend,
++	.resume = synaptics_rmi4_udg_resume,
++	.late_resume = synaptics_rmi4_udg_l_resume,
++	.attn = synaptics_rmi4_udg_attn,
++};
++
++static int __init rmi4_gesture_module_init(void)
++{
++	synaptics_rmi4_new_function(&gesture_module, true);
++
++	return 0;
++}
++
++static void __exit rmi4_gesture_module_exit(void)
++{
++	synaptics_rmi4_new_function(&gesture_module, false);
++
++	wait_for_completion(&udg_remove_complete);
++
++	return;
++}
++
++module_init(rmi4_gesture_module_init);
++module_exit(rmi4_gesture_module_exit);
++
++MODULE_AUTHOR("Synaptics, Inc.");
++MODULE_DESCRIPTION("Synaptics DSX User Defined Gesture Module");
++MODULE_LICENSE("GPL v2");
+diff --git a/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_i2c.c b/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_i2c.c
+index 4fed7d4b12b7..50e01d45cad7 100644
+--- a/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_i2c.c
++++ b/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_i2c.c
+@@ -70,8 +70,7 @@ static int parse_dt(struct device *dev, struct synaptics_dsx_board_data *bdata)
+ 	bdata->irq_gpio = of_get_named_gpio_flags(np,
+ 			"synaptics,irq-gpio", 0,
+ 			(enum of_gpio_flags *)&bdata->irq_flags);
+-	
+-    printk("dgy %s bdata->irq_gpio = %d \n", __func__, bdata->irq_gpio);
++
+ 	retval = of_property_read_u32(np, "synaptics,irq-on-state",
+ 			&value);
+ 	if (retval < 0)
+@@ -516,10 +515,6 @@ static int synaptics_rmi4_i2c_probe(struct i2c_client *client,
+ {
+ 	int retval;
+ 
+-	dev_err(&client->dev,
+-				"%s: dgy add func to synaptics_rmi4_i2c_probe\n",
+-				__func__);
+-
+ 	if (!i2c_check_functionality(client->adapter,
+ 			I2C_FUNC_SMBUS_BYTE_DATA)) {
+ 		dev_err(&client->dev,
+diff --git a/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_proximity.c b/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_proximity.c
+index 294c1a876ed6..6919502ce5eb 100644
+--- a/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_proximity.c
++++ b/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_proximity.c
+@@ -41,7 +41,7 @@
+ #include <linux/input/synaptics_dsx_X00TD.h>
+ #include "synaptics_dsx_core.h"
+ 
+-#define PROX_PHYS_NAME "synaptics_dsx/proximity"
++#define PROX_PHYS_NAME "synaptics_dsx_X00TD/proximity"
+ 
+ #define HOVER_Z_MAX (255)
+ 
+diff --git a/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_test_reporting.c b/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_test_reporting.c
+index 788a70ad5044..cb1d9874bd1a 100644
+--- a/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_test_reporting.c
++++ b/drivers/input/touchscreen/synaptics_dsx_X00TD/synaptics_dsx_test_reporting.c
+@@ -42,17 +42,6 @@
+ #include <linux/platform_device.h>
+ #include <linux/input/synaptics_dsx_X00TD.h>
+ #include "synaptics_dsx_core.h"
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  start */
+-#include <linux/seq_file.h>
+-#include <asm/uaccess.h>
+-
+-#define RAWDATA_TEST_CSV_FILE "/sdcard/tpdata/RawdataTest.csv"
+-#define NOISE_TEST_CSV_FILE "/sdcard/tpdata/NoiseTest.csv"
+-#define OPEN_TEST_CSV_FILE "/sdcard/tpdata/OpenTest.csv"
+-#define SHORT_TEST_CSV_FILE_PART_1 "/sdcard/tpdata/ShortTest_1.csv"
+-#define SHORT_TEST_CSV_FILE_PART_2 "/sdcard/tpdata/ShortTest_2.csv"
+-#define TOUCH_KEY_NUM 0
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  end */
+ 
+ #define SYSFS_FOLDER_NAME "f54"
+ 
+@@ -319,9 +308,6 @@ enum f54_report_types {
+ 	F54_AMP_FULL_RAW_CAP = 78,
+ 	F54_AMP_RAW_ADC = 83,
+ 	F54_FULL_RAW_CAP_TDDI = 92,
+-	F54_NOISE_TDDI = 94,
+-	F54_EE_SHORT_TDDI = 95,
+-	F54_ELEC_OPEN_DETECTOR_TDDI = 139,
+ 	INVALID_REPORT_TYPE = -1,
+ };
+ 
+@@ -1000,21 +986,6 @@ struct f54_control_88 {
+ 	};
+ };
+ 
+-struct f54_control_99 {
+-	union {
+-		struct {
+-			unsigned char integration_duration_lsb;
+-			unsigned char integration_duration_msb;
+-			unsigned char reset_duration;
+-		} __packed;
+-		struct {
+-			unsigned char data[3];
+-			unsigned short address;
+-		} __packed;
+-	};
+-};
+-
+-
+ struct f54_control_110 {
+ 	union {
+ 		struct {
+@@ -1075,7 +1046,6 @@ struct f54_control {
+ 	struct f54_control_57 *reg_57;
+ 	struct f54_control_86 *reg_86;
+ 	struct f54_control_88 *reg_88;
+-	struct f54_control_99 *reg_99;
+ 	struct f54_control_110 *reg_110;
+ 	struct f54_control_149 *reg_149;
+ 	struct f54_control_188 *reg_188;
+@@ -1089,9 +1059,6 @@ struct synaptics_rmi4_f54_handle {
+ 	unsigned char intr_reg_num;
+ 	unsigned char tx_assigned;
+ 	unsigned char rx_assigned;
+-	unsigned char swap_sensor_side;
+-	unsigned char left_mux_size;
+-	unsigned char right_mux_size;
+ 	unsigned char *report_data;
+ 	unsigned short query_base_addr;
+ 	unsigned short control_base_addr;
+@@ -1440,41 +1407,6 @@ struct synaptics_rmi4_f21_handle {
+ 	unsigned short command_base_addr;
+ };
+ 
+-// a global buffer to record the raw rt92 image data
+-// size = tx_num * rx_num * 2 * sizeof(char)
+-static unsigned char *g_tddi_full_raw_data_output;
+-
+-#define NOISE_TEST_LIMIT  50  //28
+-#define NOISE_TEST_NUM_OF_FRAMES 50
+-
+-#define _TEST_FAIL 1
+-#define _TEST_PASS 0
+-
+-// a global buffer to record the testing data of tddi_noise test
+-// size = tx_num * rx_num * sizeof(short)
+-static signed short *g_tddi_noise_data_output;
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  start */
+-static signed short *g_tddi_noise_data_output_1;
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  end */
+-#define EE_SHORT_TEST_LIMIT_PART1  150 //100
+-#define EE_SHORT_TEST_LIMIT_PART2  50  //96
+-
+-// a global buffer to record the testing result of e-to-e short test
+-// size = tx_num * rx_num * sizeof(char)
+-static unsigned char *g_tddi_ee_short_data_output;
+-
+-#define ELEC_OPEN_DETECTOR_MOD_RST_DUR 0
+-#define ELEC_OPEN_DETECTOR_RST_DUR 9
+-#define ELEC_OPEN_DETECTOR_LIMIT_LOWER 30 //70
+-#define ELEC_OPEN_DETECTOR_LIMIT_UPPER 220 //130
+-// a global buffer to record the testing result of amp open test
+-// size = tx_num * rx_num * sizeof(char)
+-static unsigned char *g_tddi_amp_open_data_output;
+-
+-// a global flag to indicate the failure of report image reading
+-// true : fail to read image
+-static bool g_flag_readrt_err;
+-
+ show_prototype(num_of_mapped_tx)
+ show_prototype(num_of_mapped_rx)
+ show_prototype(tx_mapping)
+@@ -1495,12 +1427,6 @@ show_store_prototype(fifoindex)
+ show_store_prototype(no_auto_cal)
+ show_store_prototype(read_report)
+ 
+-show_store_prototype(tddi_full_raw)
+-show_store_prototype(tddi_noise)
+-show_store_prototype(tddi_ee_short)
+-show_store_prototype(tddi_elec_open_detector)
+-show_prototype(ito_test)
+-
+ static struct attribute *attrs[] = {
+ 	attrify(num_of_mapped_tx),
+ 	attrify(num_of_mapped_rx),
+@@ -1521,12 +1447,6 @@ static struct attribute *attrs[] = {
+ 	attrify(fifoindex),
+ 	attrify(no_auto_cal),
+ 	attrify(read_report),
+-
+-	attrify(tddi_full_raw),
+-	attrify(tddi_noise),
+-	attrify(tddi_ee_short),
+-	attrify(tddi_elec_open_detector),
+-	attrify(ito_test),
+ 	NULL,
+ };
+ 
+@@ -1552,104 +1472,7 @@ static struct synaptics_rmi4_f55_handle *f55;
+ static struct synaptics_rmi4_f21_handle *f21;
+ 
+ DECLARE_COMPLETION(test_remove_complete);
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  start */
+-static int test_save_data_to_csv(short *data, int x_ch, int y_ch, const char *file_path, int offset)
+-{
+-	int32_t x = 0;
+-	int32_t y = 0;
+-	int32_t iArrayIndex = 0;
+-	struct file *fp = NULL;
+-	char *fbufp = NULL;
+-	mm_segment_t org_fs;
+-	int32_t write_ret = 0;
+-	uint32_t output_len = 0;
+-	loff_t pos = 0;
+-#if TOUCH_KEY_NUM > 0
+-	int32_t k = 0;
+-	int32_t keydata_output_offset = 0;
+-#endif /* #if TOUCH_KEY_NUM > 0 */
+-
+-	struct synaptics_rmi4_data *rmi4_data = f54->rmi4_data;
+-
+-	printk("%s:++\n", __func__);
+-	fbufp = (char *)kzalloc(8192, GFP_KERNEL);
+-	if (!fbufp) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-			"kzalloc for fbufp failed!\n");
+-		return -ENOMEM;
+-	}
+-
+-	for (y = 0; y < y_ch; y++) {
+-		for (x = 0; x < x_ch; x++) {
+-			iArrayIndex = y * x_ch + x;
+-			printk("%5d, ", data[iArrayIndex]);
+-			sprintf(fbufp + iArrayIndex * 7 + y * 2, "%5d, ", data[iArrayIndex]);
+-		}
+-		printk("\n");
+-		sprintf(fbufp + (iArrayIndex + 1) * 7 + y * 2,"\r\n");
+-	}
+-#if TOUCH_KEY_NUM > 0
+-	keydata_output_offset = y_ch * x_ch * 7 + y_ch * 2;
+-	for (k = 0; k < Key_Channel; k++) {
+-		iArrayIndex = y_ch * x_ch + k;
+-		printk("%5d, ", data[iArrayIndex]);
+-		sprintf(fbufp + keydata_output_offset + k * 7, "%5d, ", data[iArrayIndex]);
+-	}
+-	printk("\n");
+-	sprintf(fbufp + y_ch * x_ch * 7 + y_ch * 2 + Key_Channel * 7, "\r\n");
+-#endif /* #if TOUCH_KEY_NUM > 0 */
+-
+-	org_fs = get_fs();
+-	set_fs(KERNEL_DS);
+-	fp = filp_open(file_path, O_RDWR | O_CREAT, 0644);
+-	if (fp == NULL || IS_ERR(fp)) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-			"open %s failed\n", file_path);
+-		set_fs(org_fs);
+-		if (fbufp) {
+-			kfree(fbufp);
+-			fbufp = NULL;
+-		}
+-		return -1;
+-	}
+-
+-#if TOUCH_KEY_NUM > 0
+-	output_len = y_ch * x_ch * 7 + y_ch * 2 + Key_Channel * 7 + 2;
+-#else
+-	output_len = y_ch * x_ch * 7 + y_ch * 2;
+-#endif /* #if TOUCH_KEY_NUM > 0 */
+-	pos = offset;
+-	write_ret = vfs_write(fp, (char __user *)fbufp, output_len, &pos);
+-	if (write_ret <= 0) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-			"write %s failed\n", file_path);
+-		set_fs(org_fs);
+-		if (fp) {
+-			filp_close(fp, NULL);
+-			fp = NULL;
+-		}
+-		if (fbufp) {
+-			kfree(fbufp);
+-			fbufp = NULL;
+-		}
+-		return -1;
+-	}
+-
+-	set_fs(org_fs);
+-	if (fp) {
+-		filp_close(fp, NULL);
+-		fp = NULL;
+-	}
+-	if (fbufp) {
+-		kfree(fbufp);
+-		fbufp = NULL;
+-	}
+ 
+-	printk("%s:--\n", __func__);
+-
+-	return 0;
+-}
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  end */
+ static bool test_report_type_valid(enum f54_report_types report_type)
+ {
+ 	switch (report_type) {
+@@ -1680,9 +1503,6 @@ static bool test_report_type_valid(enum f54_report_types report_type)
+ 	case F54_AMP_FULL_RAW_CAP:
+ 	case F54_AMP_RAW_ADC:
+ 	case F54_FULL_RAW_CAP_TDDI:
+-	case F54_NOISE_TDDI:
+-	case F54_EE_SHORT_TDDI:
+-	case F54_ELEC_OPEN_DETECTOR_TDDI:
+ 		return true;
+ 		break;
+ 	default:
+@@ -1711,6 +1531,9 @@ static void test_set_report_size(void)
+ 	case F54_SENSOR_SPEED:
+ 	case F54_AMP_FULL_RAW_CAP:
+ 	case F54_AMP_RAW_ADC:
++	case F54_FULL_RAW_CAP_TDDI:
++		f54->report_size = 2 * tx * rx;
++		break;
+ 	case F54_HIGH_RESISTANCE:
+ 		f54->report_size = HIGH_RESISTANCE_DATA_SIZE;
+ 		break;
+@@ -1769,19 +1592,6 @@ static void test_set_report_size(void)
+ 		rx += f21->rx_assigned;
+ 		f54->report_size = 4 * (tx + rx);
+ 		break;
+-	case F54_FULL_RAW_CAP_TDDI:
+-		if (f55->extended_amp) {
+-			tx += 1;
+-		}
+-		f54->report_size = 2 * tx * rx;
+-		break;
+-	case F54_ELEC_OPEN_DETECTOR_TDDI:
+-	case F54_NOISE_TDDI:
+-		f54->report_size = 2 * tx * rx;
+-		break;
+-	case F54_EE_SHORT_TDDI:
+-		f54->report_size = 2 * 2 * tx * rx;
+-		break;
+ 	default:
+ 		f54->report_size = 0;
+ 	}
+@@ -1950,9 +1760,6 @@ static int test_do_preparation(void)
+ 	case F54_ABS_HYBRID_DELTA_CAP:
+ 	case F54_ABS_HYBRID_RAW_CAP:
+ 	case F54_FULL_RAW_CAP_TDDI:
+-	case F54_NOISE_TDDI:
+-	case F54_EE_SHORT_TDDI:
+-	case F54_ELEC_OPEN_DETECTOR_TDDI:
+ 		break;
+ 	case F54_AMP_RAW_ADC:
+ 		if (f54->query_49.has_ctrl188) {
+@@ -3045,53 +2852,6 @@ static ssize_t test_sysfs_read_report_show(struct device *dev,
+ 	return count;
+ }
+ 
+-static ssize_t test_sysfs_read_report(struct device *dev,
+-			struct device_attribute *attr, const char *buf, size_t count,
+-			bool do_preparation, bool do_reset)
+-{
+-	int retval = count;
+-	unsigned char timeout = GET_REPORT_TIMEOUT_S * 10;
+-	unsigned char timeout_count;
+-	const char cmd[] = {'1', 0};
+-	struct synaptics_rmi4_data *rmi4_data = f54->rmi4_data;
+-
+-	retval = test_sysfs_report_type_store(dev, attr, buf, count);
+-	if (retval < 0)
+-	  goto exit;
+-
+-	if(do_preparation){
+-		retval = test_sysfs_do_preparation_store(dev, attr, cmd, 1);
+-		if (retval < 0)
+-		  goto exit;
+-	}
+-	retval = test_sysfs_get_report_store(dev, attr, cmd, 1);
+-	if (retval < 0)
+-	  goto exit;
+-
+-	timeout_count = 0;
+-	do {
+-		if (f54->status != STATUS_BUSY)
+-		  break;
+-		msleep(100);
+-		timeout_count++;
+-	} while (timeout_count < timeout);
+-
+-	if ((f54->status != STATUS_IDLE) || (f54->report_size == 0)) {
+-
+-		dev_err(rmi4_data->pdev->dev.parent,
+-					"%s: Failed to read report\n",
+-					__func__);
+-		retval = -EINVAL;
+-		goto exit;
+-	}
+-
+-exit:
+-	if (do_reset)
+-	  rmi4_data->reset_device(rmi4_data, false);
+-
+-	return retval;
+-}
+-
+ static ssize_t test_sysfs_read_report_store(struct device *dev,
+ 		struct device_attribute *attr, const char *buf, size_t count)
+ {
+@@ -3141,1380 +2901,170 @@ exit:
+ 	return retval;
+ }
+ 
+-static ssize_t test_sysfs_tddi_full_raw_store(struct device *dev,
+-		struct device_attribute *attr, const char *buf, size_t count)
++static ssize_t test_sysfs_data_read(struct file *data_file,
++		struct kobject *kobj, struct bin_attribute *attributes,
++		char *buf, loff_t pos, size_t count)
+ {
+-	int retval = 0;
+-	int tx_num = f54->tx_assigned;
+-	int rx_num = f54->rx_assigned;
+-	unsigned int full_raw_report_size;
+-	unsigned long setting;
++	int retval;
++	unsigned int read_size;
+ 	struct synaptics_rmi4_data *rmi4_data = f54->rmi4_data;
+ 
+-	retval = sstrtoul(buf, 10, &setting);
+-	if (retval)
+-		return retval;
+-
+-	if (setting != 1)
+-		return -EINVAL;
+-
+-	// increase the tx number, if the button existed
+-	if (f55->extended_amp) {
+-		tx_num += 1;
+-	}
+-	full_raw_report_size = tx_num * rx_num * 2;
+-
+-	g_flag_readrt_err = false;
++	mutex_lock(&f54->status_mutex);
+ 
+-	/* allocate the g_tddi_full_raw_data_output */
+-	if (g_tddi_full_raw_data_output)
+-		kfree(g_tddi_full_raw_data_output);
++	retval = test_check_for_idle_status();
++	if (retval < 0)
++		goto exit;
+ 
+-	g_tddi_full_raw_data_output = kzalloc(full_raw_report_size, GFP_KERNEL);
+-	if (!g_tddi_full_raw_data_output) {
++	if (!f54->report_data) {
+ 		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to alloc mem for g_tddi_full_raw_data_output\n",
+-				__func__);
+-		return -ENOMEM;
++				"%s: Report type %d data not available\n",
++				__func__, f54->report_type);
++		retval = -EINVAL;
++		goto exit;
+ 	}
+ 
+-	/* get the report image 92 */
+-	retval = test_sysfs_read_report(dev, attr, "92", 3,
+-				false, false);
++	if ((f54->data_pos + count) > f54->report_size)
++		read_size = f54->report_size - f54->data_pos;
++	else
++		read_size = min_t(unsigned int, count, f54->report_size);
++
++	retval = secure_memcpy(buf, count, f54->report_data + f54->data_pos,
++			f54->data_buffer_size - f54->data_pos, read_size);
+ 	if (retval < 0) {
+ 		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to read report 92. exit\n", __func__);
+-		g_flag_readrt_err = true ;
+-		return -EIO;
++				"%s: Failed to copy report data\n",
++				__func__);
++		goto exit;
+ 	}
++	f54->data_pos += read_size;
++	retval = read_size;
+ 
+-	secure_memcpy(g_tddi_full_raw_data_output, full_raw_report_size,
+-		f54->report_data, f54->report_size, f54->report_size);
+-
+-	retval = count;
++exit:
++	mutex_unlock(&f54->status_mutex);
+ 
+ 	return retval;
+ }
+ 
+-static ssize_t test_sysfs_tddi_full_raw_show(struct device *dev,
+-		struct device_attribute *attr, char *buf)
++static void test_report_work(struct work_struct *work)
+ {
+-#define NUM_BUTTON 3
+-	unsigned int i;
+-	unsigned int j;
+-	int cnt;
+-	int count = 0;
+-	int tx_num = f54->tx_assigned;
+-	int rx_num = f54->rx_assigned;
+-	unsigned short *report_data_16;
+-
+-	unsigned short min = 0, max = 0;
+-
+-	if (!g_tddi_full_raw_data_output)
+-		return snprintf(buf, PAGE_SIZE, "\nERROR: no g_tddi_full_raw_data_output\n");
++	int retval;
++	unsigned char report_index[2];
++	struct synaptics_rmi4_data *rmi4_data = f54->rmi4_data;
+ 
+-	// check the special code if failed to get report image
+-	// output the error message
+-	if (g_flag_readrt_err) {
++	mutex_lock(&f54->status_mutex);
+ 
+-		kfree(g_tddi_full_raw_data_output);
+-		g_tddi_full_raw_data_output = NULL;
++	if (f54->status != STATUS_BUSY) {
++		retval = f54->status;
++		goto exit;
++	}
+ 
+-		return snprintf(buf, PAGE_SIZE, "\nERROR: fail to read report image\n");
++	retval = test_wait_for_command_completion();
++	if (retval < 0) {
++		retval = STATUS_ERROR;
++		goto exit;
+ 	}
+ 
+-	cnt = snprintf(buf, PAGE_SIZE - count, "tx = %d\nrx = %d\n",
+-			f54->tx_assigned, f54->rx_assigned);
+-	buf += cnt;
+-	count += cnt;
++	test_set_report_size();
++	if (f54->report_size == 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Report data size = 0\n",
++				__func__);
++		retval = STATUS_ERROR;
++		goto exit;
++	}
+ 
+-	report_data_16 = (unsigned short *)g_tddi_full_raw_data_output;
++	if (f54->data_buffer_size < f54->report_size) {
++		if (f54->data_buffer_size)
++			kfree(f54->report_data);
++		f54->report_data = kzalloc(f54->report_size, GFP_KERNEL);
++		if (!f54->report_data) {
++			dev_err(rmi4_data->pdev->dev.parent,
++					"%s: Failed to alloc mem for data buffer\n",
++					__func__);
++			f54->data_buffer_size = 0;
++			retval = STATUS_ERROR;
++			goto exit;
++		}
++		f54->data_buffer_size = f54->report_size;
++	}
+ 
+-	min = max = *report_data_16;
++	report_index[0] = 0;
++	report_index[1] = 0;
+ 
+-	for (i = 0; i < tx_num; i++) {
+-		for (j = 0; j < rx_num; j++) {
+-			cnt = snprintf(buf, PAGE_SIZE - count, "%-5d ", *report_data_16);
+-			min = (min < *report_data_16)? min : *report_data_16;
+-			max = (max > *report_data_16)? max : *report_data_16;
++	retval = synaptics_rmi4_reg_write(rmi4_data,
++			f54->data_base_addr + REPORT_INDEX_OFFSET,
++			report_index,
++			sizeof(report_index));
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to write report data index\n",
++				__func__);
++		retval = STATUS_ERROR;
++		goto exit;
++	}
+ 
+-			report_data_16++;
+-			buf += cnt;
+-			count += cnt;
+-		}
+-		cnt = snprintf(buf, PAGE_SIZE - count, "\n");
+-		buf += cnt;
+-		count += cnt;
++	retval = synaptics_rmi4_reg_read(rmi4_data,
++			f54->data_base_addr + REPORT_DATA_OFFSET,
++			f54->report_data,
++			f54->report_size);
++	if (retval < 0) {
++		dev_err(rmi4_data->pdev->dev.parent,
++				"%s: Failed to read report data\n",
++				__func__);
++		retval = STATUS_ERROR;
++		goto exit;
+ 	}
+ 
+-	cnt = snprintf(buf, PAGE_SIZE - count, "\ndata range (max, min) = (%-4d, %-4d)\n", max, min);
+-	buf += cnt;
+-	count += cnt;
++	retval = STATUS_IDLE;
+ 
+-	// if the button existed, output the data of 0D button
+-	if (f55->extended_amp) {
+-		cnt = snprintf(buf, PAGE_SIZE - count, "\namp button count = %d.\n", NUM_BUTTON);
+-		buf += cnt;
+-		count += cnt;
++exit:
++	mutex_unlock(&f54->status_mutex);
+ 
+-		for (i = 0; i < NUM_BUTTON; i++) {
+-			cnt = snprintf(buf, PAGE_SIZE - count, "%-5d ", *report_data_16);
++	if (retval == STATUS_ERROR)
++		f54->report_size = 0;
+ 
+-			report_data_16++;
+-			buf += cnt;
+-			count += cnt;
+-		}
+-		cnt = snprintf(buf, PAGE_SIZE - count, "\n");
+-		buf += cnt;
+-		count += cnt;
+-	}
++	f54->status = retval;
+ 
+-	snprintf(buf, PAGE_SIZE - count, "\n");
+-	count++;
++	return;
++}
+ 
+-	kfree(g_tddi_full_raw_data_output);
+-	g_tddi_full_raw_data_output = NULL;
++static void test_remove_sysfs(void)
++{
++	sysfs_remove_group(f54->sysfs_dir, &attr_group);
++	sysfs_remove_bin_file(f54->sysfs_dir, &test_report_data);
++	kobject_put(f54->sysfs_dir);
+ 
+-	return count;
++	return;
+ }
+ 
+-static ssize_t test_sysfs_tddi_noise_store(struct device *dev,
+-		struct device_attribute *attr, const char *buf, size_t count)
++static int test_set_sysfs(void)
+ {
+-	int retval = 0;
+-	int i, j, offset;
+-	int tx_num = f54->tx_assigned;
+-	int rx_num = f54->rx_assigned;
+-	int repeat;
+-
+-	signed short report_data_16;
+-	signed short *tddi_noise_max = NULL;
+-	signed short *tddi_noise_min = NULL;
+-	unsigned char *tddi_noise_data = NULL;
+-	unsigned int buffer_size = tx_num * rx_num * 2;
+-	unsigned long setting;
++	int retval;
+ 	struct synaptics_rmi4_data *rmi4_data = f54->rmi4_data;
+ 
+-	retval = sstrtoul(buf, 10, &setting);
+-	if (retval)
+-		return retval;
+-
+-	if (setting != 1)
+-		return -EINVAL;
+-
+-	/* allocate the g_tddi_noise_data_output */
+-	if (g_tddi_noise_data_output)
+-		kfree(g_tddi_noise_data_output);
+-
+-	g_tddi_noise_data_output = (signed short *)kzalloc(tx_num * rx_num *sizeof(short), GFP_KERNEL);
+-	if (!g_tddi_noise_data_output) {
++	f54->sysfs_dir = kobject_create_and_add(SYSFS_FOLDER_NAME,
++			&rmi4_data->input_dev->dev.kobj);
++	if (!f54->sysfs_dir) {
+ 		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to alloc mem for g_tddi_noise_data_output\n",
++				"%s: Failed to create sysfs directory\n",
+ 				__func__);
+-		return -ENOMEM;
++		goto exit_directory;
+ 	}
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  start */
+-	if (g_tddi_noise_data_output_1)
+-		kfree(g_tddi_noise_data_output_1);
+ 
+-	g_tddi_noise_data_output_1 = (signed short *)kzalloc(tx_num * rx_num *sizeof(short), GFP_KERNEL);
+-	if (!g_tddi_noise_data_output_1) {
++	retval = sysfs_create_bin_file(f54->sysfs_dir, &test_report_data);
++	if (retval < 0) {
+ 		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to alloc mem for g_tddi_noise_data_output_1\n",
++				"%s: Failed to create sysfs bin file\n",
+ 				__func__);
+-		return -ENOMEM;
++		goto exit_bin_file;
+ 	}
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  end */	
+-	// allocate the internal buffer
+-	tddi_noise_data = kzalloc(buffer_size, GFP_KERNEL);
+-	if (!tddi_noise_data) {
++
++	retval = sysfs_create_group(f54->sysfs_dir, &attr_group);
++	if (retval < 0) {
+ 		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to alloc mem for tddi_noise_data\n",
++				"%s: Failed to create sysfs attributes\n",
+ 				__func__);
+-		retval = -ENOMEM;
+-		goto exit;
+-	}
+-
+-	tddi_noise_max = (unsigned short *)kzalloc(buffer_size, GFP_KERNEL);
+-	if (!tddi_noise_max) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to alloc mem for tddi_noise_max\n",
+-				__func__);
+-		retval = -ENOMEM;
+-		goto exit;
+-	}
+-
+-	tddi_noise_min = (unsigned short *) kzalloc(buffer_size, GFP_KERNEL);
+-	if (!tddi_noise_min) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to alloc mem for tddi_noise_min\n",
+-				__func__);
+-		retval = -ENOMEM;
+-		goto exit;
+-	}
+-
+-	g_flag_readrt_err = false;
+-
+-	/* get report image 94 repeatedly */
+-	/* and calculate the minimum and maximun value as well */
+-	for (repeat = 0 ; repeat < NOISE_TEST_NUM_OF_FRAMES; repeat++){
+-
+-		retval = test_sysfs_read_report(dev, attr, "94", 3,
+-					false, false);
+-		if (retval < 0) {
+-			dev_err(rmi4_data->pdev->dev.parent,
+-					"%s: Failed to read report 94 at %d round. exit\n",
+-					__func__, repeat);
+-			retval = -EIO;
+-			g_flag_readrt_err = true;
+-			goto exit;
+-		}
+-
+-		memset(tddi_noise_data, 0x00, buffer_size);
+-
+-		secure_memcpy(tddi_noise_data, buffer_size,
+-			f54->report_data, f54->report_size, f54->report_size);
+-
+-		for (i = 0, offset = 0; i < tx_num; i++) {
+-			for (j = 0; j < rx_num; j++) {
+-
+-				report_data_16 =
+-					(signed short)tddi_noise_data[offset] +
+-					((signed short)tddi_noise_data[offset+1] << 8);
+-				offset += 2;
+-
+-				tddi_noise_max[i*rx_num + j] =
+-					max_t(signed short, tddi_noise_max[i*rx_num + j], report_data_16);
+-				tddi_noise_min[i*rx_num + j] =
+-					min_t(signed short, tddi_noise_min[i*rx_num + j], report_data_16);
+-			}
+-		}
+-
+-	}
+-
+-	// generate the noise delta image
+-	// the value should be lower than TEST_LIMIT ( fail, if > TEST_LIMIT )
+-	// 1: fail / 0 : pass
+-
+-	for (i = 0; i < tx_num; i++) {
+-		for (j = 0; j < rx_num; j++) {
+-			g_tddi_noise_data_output[i*rx_num + j] =
+-				tddi_noise_max[i*rx_num + j] - tddi_noise_min[i*rx_num + j];
+-
+-			if (g_tddi_noise_data_output[i*rx_num + j] > NOISE_TEST_LIMIT )  {
+-				dev_err(rmi4_data->pdev->dev.parent,
+-						"%s: fail at (tx%-2d, rx%-2d) = %-4d (limit = %d)\n",
+-						__func__, i, j, g_tddi_noise_data_output[i*rx_num + j], NOISE_TEST_LIMIT);
+-
+-				g_tddi_noise_data_output[i*rx_num + j] = _TEST_FAIL; // 1: fail
+-			}
+-			else {
+-				g_tddi_noise_data_output[i*rx_num + j] = _TEST_PASS;
+-			}
+-
+-		}
+-	}
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  start */
+-	for (i = 0; i < tx_num; i++) {
+-		for (j = 0; j < rx_num; j++) {
+-			g_tddi_noise_data_output_1[i*rx_num + j] =
+-				tddi_noise_max[i*rx_num + j] - tddi_noise_min[i*rx_num + j];
+-		}
+-	}
+-
+-	retval = test_save_data_to_csv(g_tddi_noise_data_output_1, tx_num, rx_num, NOISE_TEST_CSV_FILE, 0);
+-	if (retval < 0) {
+-		dev_err(rmi4_data->pdev->dev.parent, 
+-			"save noise test data to CSV file failed\n");
+-		return -EAGAIN;	
+-	}
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  end */
+-	retval = count;
+-
+-exit:
+-	kfree(tddi_noise_max);
+-	kfree(tddi_noise_min);
+-	kfree(tddi_noise_data);
+-
+-	return retval;
+-}
+-
+-static ssize_t test_sysfs_tddi_noise_show(struct device *dev,
+-		struct device_attribute *attr, char *buf)
+-{
+-	int i, j;
+-	int tx_num = f54->tx_assigned;
+-	int rx_num = f54->rx_assigned;
+-	int fail_count = 0;
+-
+-	if (!g_tddi_noise_data_output)
+-		return snprintf(buf, PAGE_SIZE, "\nERROR: no g_tddi_noise_data_output\n");
+-
+-	// check the special code if failed to get report image
+-	// output the error message
+-	if (g_flag_readrt_err) {
+-
+-		kfree(g_tddi_noise_data_output);
+-		g_tddi_noise_data_output = NULL;
+-
+-		return snprintf(buf, PAGE_SIZE, "\nERROR: fail to read report image\n");
+-	}
+-
+-	for (i = 0; i < tx_num; i++) {
+-		for (j = 0; j < rx_num; j++) {
+-			if (g_tddi_noise_data_output[i * rx_num + j] != _TEST_PASS) {
+-
+-				fail_count += 1;
+-			}
+-		}
+-	}
+-
+-	kfree(g_tddi_noise_data_output);
+-	g_tddi_noise_data_output = NULL;
+-
+-	return snprintf(buf, PAGE_SIZE, "%s\n", (fail_count == 0) ? "PASS" : "FAIL");
+-}
+-
+-static short find_median(short* pdata, int num)
+-{
+-	int i,j;
+-	short temp;
+-	short *value;
+-	short median;
+-
+-	value = (short *)kzalloc( num * sizeof(short), GFP_KERNEL);
+-
+-	for(i=0; i < num; i++)
+-		*(value+i) = *(pdata+i);
+-
+-	//sorting
+-	for ( i=1; i <= num-1; i++)
+-	{
+-		for ( j=1; j <= num-i; j++)
+-		{
+-			if (*(value+j-1) <= *(value+j))
+-			{
+-			   temp = *(value+j-1);
+-			   *(value+j-1)= *(value+j);
+-			   *(value+j) = temp;
+-			}
+-			else
+-				continue ;
+-		}
+-	}
+-
+-	//calculation of median
+-	if ( num % 2 == 0)
+-		median = ( *(value+(num/2 -1)) + *(value+(num/2)) )/2;
+-	else
+-		median = *(value+(num/2));
+-
+-	if(value)
+-		kfree(value);
+-
+-	return median;
+-}
+-
+-static int tddi_ratio_calculation(signed short *p_image)
+-{
+-	int retval = 0;
+-	int i, j;
+-	int tx_num = f54->tx_assigned;
+-	int rx_num = f54->rx_assigned;
+-	unsigned char left_size = f54->left_mux_size;
+-	unsigned char right_size = f54->right_mux_size;
+-	signed short *p_data_16;
+-	signed short *p_left_median = NULL;
+-	signed short *p_right_median = NULL;
+-	signed short *p_left_column_buf = NULL;
+-	signed short *p_right_column_buf = NULL;
+-	signed int temp;
+-	struct synaptics_rmi4_data *rmi4_data = f54->rmi4_data;
+-
+-	if (!p_image) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Fail. p_image is null\n", __func__);
+-		retval = -EINVAL;
+-		goto exit;
+-	}
+-
+-	// allocate the buffer for the median value in left/right half
+-	p_right_median = (signed short *) kzalloc(rx_num * sizeof(short), GFP_KERNEL);
+-	if (!p_right_median) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to alloc mem for p_right_median\n", __func__);
+-		retval = -ENOMEM;
+-		goto exit;
+-	}
+-
+-	p_left_median = (signed short *) kzalloc(rx_num * sizeof(short), GFP_KERNEL);
+-	if (!p_left_median) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to alloc mem for p_left_median\n", __func__);
+-		retval = -ENOMEM;
+-		goto exit;
+-	}
+-
+-	p_right_column_buf = (signed short *) kzalloc(right_size * rx_num * sizeof(short), GFP_KERNEL);
+-	if (!p_right_column_buf ) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to alloc mem for p_right_column_buf\n", __func__);
+-		retval = -ENOMEM;
+-		goto exit;
+-	}
+-
+-	p_left_column_buf = (signed short *) kzalloc(left_size * rx_num * sizeof(short), GFP_KERNEL);
+-	if (!p_left_column_buf ) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to alloc mem for p_left_column_buf\n", __func__);
+-		retval = -ENOMEM;
+-		goto exit;
+-	}
+-
+-	// divide the input image into left/right parts
+-	if (f54->swap_sensor_side) {
+-
+-		// first row is left side data
+-		p_data_16 = p_image;
+-		for (i = 0; i < rx_num; i++) {
+-			for (j = 0; j < left_size; j++) {
+-				p_left_column_buf[i * left_size + j] = p_data_16[j * rx_num + i];
+-			}
+-		}
+-		// right side data
+-		p_data_16 = p_image + left_size * rx_num;
+-		for (i = 0; i < rx_num; i++) {
+-			for (j = 0; j < right_size; j++) {
+-				p_right_column_buf[i * right_size + j] = p_data_16[j * rx_num + i];
+-			}
+-		}
+-	}
+-	else {
+-
+-		// first row is right side data
+-		p_data_16 = p_image;
+-		for (i = 0; i < rx_num; i++) {
+-			for (j = 0; j < right_size; j++) {
+-				p_right_column_buf[i * right_size + j] = p_data_16[j * rx_num + i];
+-			}
+-		}
+-		// left side data
+-		p_data_16 = p_image + right_size * rx_num;
+-		for (i = 0; i < rx_num; i++) {
+-			for (j = 0; j < left_size; j++) {
+-				p_left_column_buf[i * left_size + j] = p_data_16[j * rx_num + i];
+-			}
+-		}
+-	}
+-
+-	// find the median in every column
+-	for (i = 0; i < rx_num; i++) {
+-		p_left_median[i] = find_median(p_left_column_buf + i * left_size, left_size);
+-		p_right_median[i] = find_median(p_right_column_buf + i * right_size, right_size);
+-	}
+-
+-	// walk through the image of all data
+-	// and calculate the ratio by using the median
+-	for (i = 0; i < tx_num; i++) {
+-		for (j = 0; j < rx_num; j++) {
+-
+-			// calcueate the ratio
+-			if (f54->swap_sensor_side) {
+-				// first row is left side
+-				if (i < left_size) {
+-					temp = (signed int) p_image[i * rx_num + j];
+-					temp = temp * 100 / p_left_median[j];
+-				} else {
+-					temp = (signed int) p_image[i * rx_num + j];
+-					temp = temp * 100 / p_right_median[j];
+-				}
+-			}
+-			else {
+-				// first row is right side
+-				if (i < right_size) {
+-					temp = (signed int) p_image[i * rx_num + j];
+-					temp = temp * 100 / p_right_median[j];
+-				} else {
+-					temp = (signed int) p_image[i * rx_num + j];
+-					temp = temp * 100 / p_left_median[j];
+-				}
+-			}
+-
+-			// replace the original data with the calculated ratio
+-			p_image[i * rx_num + j] = temp;
+-		}
+-	}
+-
+-exit:
+-	kfree(p_right_median);
+-	kfree(p_left_median);
+-	kfree(p_right_column_buf);
+-	kfree(p_left_column_buf);
+-	return retval;
+-}
+-
+-static ssize_t test_sysfs_tddi_ee_short_store(struct device *dev,
+-		struct device_attribute *attr, const char *buf, size_t count)
+-{
+-	int retval;
+-	int i, j, offset;
+-	int tx_num = f54->tx_assigned;
+-	int rx_num = f54->rx_assigned;
+-	signed short *tddi_rt95_part_one = NULL;
+-	signed short *tddi_rt95_part_two = NULL;
+-	unsigned int buffer_size = tx_num * rx_num * 2;
+-	unsigned long setting;
+-	struct synaptics_rmi4_data *rmi4_data = f54->rmi4_data;
+-
+-	retval = sstrtoul(buf, 10, &setting);
+-	if (retval)
+-		return retval;
+-
+-	if (setting != 1)
+-		return -EINVAL;
+-
+-	/* allocate the g_tddi_ee_short_data_output */
+-	if (g_tddi_ee_short_data_output)
+-		kfree(g_tddi_ee_short_data_output);
+-
+-	g_tddi_ee_short_data_output = kzalloc(tx_num * rx_num, GFP_KERNEL);
+-	if (!g_tddi_ee_short_data_output) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to alloc mem for g_tddi_ee_short_data_output\n",
+-				__func__);
+-		return -ENOMEM;
+-	}
+-
+-	// allocate the internal buffer
+-	tddi_rt95_part_one = kzalloc(buffer_size, GFP_KERNEL);
+-	if (!tddi_rt95_part_one) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to alloc mem for tddi_rt95_part_one\n",
+-				__func__);
+-		retval = -ENOMEM;
+-		goto exit;
+-	}
+-
+-	tddi_rt95_part_two = kzalloc(buffer_size, GFP_KERNEL);
+-	if (!tddi_rt95_part_two) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to alloc mem for td43xx_rt95_part_two\n",
+-				__func__);
+-		retval = -ENOMEM;
+-		goto exit;
+-	}
+-
+-	g_flag_readrt_err = false;
+-
+-	/* step 1 */
+-	/* get report image 95 */
+-	retval = test_sysfs_read_report(dev, attr, "95", 3,
+-				false, false);
+-	if (retval < 0) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to read report 95. exit\n", __func__);
+-		retval = -EIO;
+-		g_flag_readrt_err = true;
+-		goto exit;
+-	}
+-
+-	/* step 2 */
+-	/* use the upper half as part 1 image */
+-	/* the data should be lower than TEST_LIMIT_PART1 ( fail, if > TEST_LIMIT_PART1 ) */
+-	for (i = 0, offset = 0; i < tx_num * rx_num; i++) {
+-		tddi_rt95_part_one[i] = (signed short)(f54->report_data[offset]) |
+-								((signed short)(f54->report_data[offset + 1]) << 8);
+-		offset += 2;
+-	}
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  start */	
+-	retval = test_save_data_to_csv((short *)tddi_rt95_part_one, tx_num, rx_num, SHORT_TEST_CSV_FILE_PART_1, 0);
+-	if (retval < 0) {
+-		dev_err(rmi4_data->pdev->dev.parent, 
+-			"save short test data1 to CSV file failed\n");
+-	//	return -EAGAIN;	
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  end */
+-	}
+-
+-	for (i = 0; i < tx_num; i++) {
+-		for (j = 0; j < rx_num; j++) {
+-			if (tddi_rt95_part_one[i*rx_num + j] > EE_SHORT_TEST_LIMIT_PART1) {
+-				dev_err(rmi4_data->pdev->dev.parent,
+-						"%s: fail at (tx%-2d, rx%-2d) = %-4d in part 1 image (limit = %d)\n",
+-						__func__, i, j, tddi_rt95_part_one[i*rx_num + j], EE_SHORT_TEST_LIMIT_PART1);
+-
+-				tddi_rt95_part_one[i*rx_num + j] = _TEST_FAIL; // 1: fail
+-			}
+-			else {
+-				tddi_rt95_part_one[i*rx_num + j] = _TEST_PASS;
+-			}
+-		}
+-	}
+-
+-	/* step 3 */
+-	/* use the lower half as part 2 image */
+-	/* and perform the calculation */
+-	/* the calculated data should be over than TEST_LIMIT_PART2 ( fail, if < TEST_LIMIT_PART2 ) */
+-	for (i = 0, offset = buffer_size; i < tx_num * rx_num; i++) {
+-		tddi_rt95_part_two[i] = (signed short)(f54->report_data[offset]) |
+-								((signed short)(f54->report_data[offset + 1]) << 8);
+-		offset += 2;
+-	}
+-
+-	// calculate the ratio
+-	tddi_ratio_calculation(tddi_rt95_part_two);
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  start */
+-	retval = test_save_data_to_csv((short *)tddi_rt95_part_two, tx_num, rx_num, SHORT_TEST_CSV_FILE_PART_2, 0);
+-	if (retval < 0) {
+-		dev_err(rmi4_data->pdev->dev.parent, 
+-			"save short test data2 to CSV file failed\n");
+-	//	return -EAGAIN;	
+-	}
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  end */
+-	for (i = 0; i < tx_num; i++) {
+-		for (j = 0; j < rx_num; j++) {
+-			if (tddi_rt95_part_two[i*rx_num + j] < EE_SHORT_TEST_LIMIT_PART2) {
+-				dev_err(rmi4_data->pdev->dev.parent,
+-						"%s: fail at (tx%-2d, rx%-2d) = %-4d in part 2 image (limit = %d)\n",
+-						__func__, i, j, tddi_rt95_part_two[i*rx_num + j], EE_SHORT_TEST_LIMIT_PART2);
+-
+-				tddi_rt95_part_two[i*rx_num + j] = _TEST_FAIL; // 1: fail
+-			}
+-			else {
+-				tddi_rt95_part_two[i*rx_num + j] = _TEST_PASS;
+-			}
+-		}
+-	}
+-
+-	/* step 4 */
+-	/* filling out the g_tddi_ee_short_data_output */
+-	/* 1: fail / 0 : pass */
+-	for (i = 0; i < tx_num; i++) {
+-		for (j = 0; j < rx_num; j++) {
+-			g_tddi_ee_short_data_output[i * rx_num + j] =
+-				(unsigned char)(tddi_rt95_part_one[i * rx_num + j]) || tddi_rt95_part_two[i * rx_num + j];
+-		}
+-	}
+-
+-	retval = count;
+-
+-exit:
+-	kfree(tddi_rt95_part_one);
+-	kfree(tddi_rt95_part_two);
+-
+-
+-	return retval;
+-}
+-
+-static ssize_t test_sysfs_tddi_ee_short_show(struct device *dev,
+-		struct device_attribute *attr, char *buf)
+-{
+-	int i, j;
+-	int tx_num = f54->tx_assigned;
+-	int rx_num = f54->rx_assigned;
+-	int fail_count = 0;
+-
+-	if (!g_tddi_ee_short_data_output)
+-		return snprintf(buf, PAGE_SIZE, "\nERROR: no g_tddi_ee_short_data_output\n");
+-
+-	// check the special code if failed to get report image
+-	// output the error message
+-	if (g_flag_readrt_err) {
+-
+-		kfree(g_tddi_ee_short_data_output);
+-		g_tddi_ee_short_data_output = NULL;
+-
+-		return snprintf(buf, PAGE_SIZE, "\nERROR: fail to read report image\n");
+-	}
+-
+-	for (i = 0; i < tx_num; i++) {
+-		for (j = 0; j < rx_num; j++) {
+-			if (g_tddi_ee_short_data_output[i * rx_num + j] != _TEST_PASS) {
+-
+-				fail_count += 1;
+-			}
+-		}
+-	}
+-
+-	kfree(g_tddi_ee_short_data_output);
+-	g_tddi_ee_short_data_output = NULL;
+-
+-	return snprintf(buf, PAGE_SIZE, "%s\n", (fail_count == 0) ? "PASS" : "FAIL");
+-}
+-
+-static unsigned short g_full_raw_limit_lower = 200; //300
+-static unsigned short g_full_raw_limit_upper = 3800;//3000
+-
+-static ssize_t test_sysfs_tddi_elec_open_detector_store(struct device *dev,
+-		struct device_attribute *attr, const char *buf, size_t count)
+-{
+-	int retval = 0;
+-	int i, j, k;
+-	int tx_num = f54->tx_assigned;
+-	int rx_num = f54->rx_assigned;
+-	struct synaptics_rmi4_data *rmi4_data = f54->rmi4_data;
+-	struct f54_control control = f54->control;
+-	unsigned long setting;
+-
+-	struct f54_control_99  original_f54_ctrl99;
+-
+-	short temp_data;
+-	signed short  *p_rt139_image = NULL;
+-	signed short  *p_median_image = NULL;
+-	signed short  *p_buf_col = NULL;
+-
+-	retval = sstrtoul(buf, 10, &setting);
+-	if (retval)
+-		return retval;
+-
+-	if (setting != 1)
+-		return -EINVAL;
+-
+-	// allocate the g_tddi_amp_open_data_output
+-	if (g_tddi_amp_open_data_output)
+-		kfree(g_tddi_amp_open_data_output);
+-	g_tddi_amp_open_data_output = kzalloc(tx_num * rx_num, GFP_KERNEL);
+-	if (!g_tddi_amp_open_data_output) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to alloc mem for g_tddi_amp_open_data_output\n",
+-				__func__);
+-		return -ENOMEM;
+-	}
+-
+-	g_flag_readrt_err = false;
+-
+-	// allocate the internal buffer
+-	p_rt139_image = kzalloc(tx_num * rx_num * sizeof(signed short), GFP_KERNEL);
+-	if (!p_rt139_image) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to alloc mem for p_rt139_image\n",
+-				__func__);
+-		retval = -ENOMEM;
+-		goto exit;
+-	}
+-	p_median_image = kzalloc(tx_num * rx_num * sizeof(signed short), GFP_KERNEL);
+-	if (!p_median_image) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to alloc mem for p_median_image\n",
+-				__func__);
+-		retval = -ENOMEM;
+-		goto exit;
+-	}
+-	p_buf_col = kzalloc(tx_num * sizeof(signed short), GFP_KERNEL);
+-	if (!p_buf_col) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to alloc mem for p_buf_col\n",
+-				__func__);
+-		retval = -ENOMEM;
+-		goto exit;
+-	}
+-
+-	/* keep the original reset duration */
+-	retval = synaptics_rmi4_reg_read(rmi4_data,
+-			control.reg_99->address,
+-			original_f54_ctrl99.data,
+-			sizeof(original_f54_ctrl99.data));
+-	if (retval < 0) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to read original data from f54_ctrl99\n",
+-				__func__);
+-		retval = -EIO;
+-		goto exit;
+-	}
+-	/* change the reset duration if the ELEC_OPEN_DETECTOR_MOD_RST_DUR is enabled */
+-	if (ELEC_OPEN_DETECTOR_MOD_RST_DUR) {
+-		/* change RST_DUR at F54_ANALOG_CTRL99 */
+-		control.reg_99->integration_duration_lsb = original_f54_ctrl99.integration_duration_lsb;
+-		control.reg_99->integration_duration_msb = original_f54_ctrl99.integration_duration_msb;
+-		control.reg_99->reset_duration = ELEC_OPEN_DETECTOR_RST_DUR;
+-		retval = synaptics_rmi4_reg_write(rmi4_data,
+-				control.reg_99->address,
+-				control.reg_99->data,
+-				sizeof(control.reg_99->data));
+-		if (retval < 0) {
+-			dev_err(rmi4_data->pdev->dev.parent,
+-					"%s: Failed to set reset duration to f54_ctrl99\n",
+-					__func__);
+-			retval = -EIO;
+-			goto exit;
+-		}
+-
+-		retval = test_do_command(COMMAND_FORCE_UPDATE);
+-		if (retval < 0) {
+-			dev_err(rmi4_data->pdev->dev.parent,
+-					"%s: Failed to do force update when changing the reset duration\n",
+-					__func__);
+-			retval = -EIO;
+-			goto exit;
+-		}
+-	}
+-
+-	/* read rt139 image */
+-	retval = test_sysfs_read_report(dev, attr, "139", 4,
+-				false, false);
+-	if (retval < 0) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to read report 139. exit\n",
+-				__func__);
+-		retval = -EIO;
+-		g_flag_readrt_err = false;
+-		goto exit;
+-	}
+-
+-	for (i = 0, k = 0; i < tx_num; i++) {
+-		for (j = 0; j < rx_num; j++) {
+-			p_rt139_image[i * rx_num + j] =
+-				(signed short)(f54->report_data[k] & 0xff ) | (signed short)(f54->report_data[k + 1] << 8);
+-
+-			k += 2;
+-		}
+-	}
+-
+-	/* recover the original reset duration if the ELEC_OPEN_DETECTOR_MOD_RST_DUR is enabled */
+-	if (ELEC_OPEN_DETECTOR_MOD_RST_DUR) {
+-		retval = synaptics_rmi4_reg_write(rmi4_data,
+-				control.reg_99->address,
+-				original_f54_ctrl99.data,
+-				sizeof(original_f54_ctrl99.data));
+-		if (retval < 0) {
+-			dev_err(rmi4_data->pdev->dev.parent,
+-					"%s: Failed to restore f54_ctrl99 data\n",
+-					__func__);
+-			retval = -EIO;
+-			goto exit;
+-		}
+-
+-		retval = test_do_command(COMMAND_FORCE_UPDATE);
+-		if (retval < 0) {
+-			dev_err(rmi4_data->pdev->dev.parent,
+-					"%s: Failed to do force update when restoring the reset duration\n",
+-					__func__);
+-			retval = -EIO;
+-			goto exit;
+-		}
+-	}
+-
+-	/* calculate the median value */
+-	for (i = 0; i < rx_num; i++) {
+-		for (j = 0; j < tx_num; j++) {
+-			p_buf_col[j] = p_rt139_image[j * rx_num + i];
+-		}
+-
+-		temp_data = find_median(p_buf_col, tx_num);
+-		for (j = 0; j < tx_num; j++) {
+-			p_median_image[j * rx_num + i] = temp_data;
+-		}
+-	}
+-
+-	/* calculate the ratio */
+-	for (i = 0; i < tx_num; i++) {
+-		for (j = 0; j < rx_num; j++) {
+-			temp_data = (short)((p_rt139_image[i * rx_num + j] * 100)/p_median_image[i * rx_num + j]);
+-			if ((temp_data < ELEC_OPEN_DETECTOR_LIMIT_LOWER) || (temp_data > ELEC_OPEN_DETECTOR_LIMIT_UPPER)) {
+-
+-				dev_err(rmi4_data->pdev->dev.parent,
+-						"%s: fail at (tx%-2d, rx%-2d) = %-4d (limit = %d - %d)\n",
+-						__func__, i, j, temp_data, ELEC_OPEN_DETECTOR_LIMIT_LOWER, ELEC_OPEN_DETECTOR_LIMIT_UPPER);
+-
+-				g_tddi_amp_open_data_output[i*rx_num + j] = _TEST_FAIL; // 1: fail
+-			}
+-			else {
+-				g_tddi_amp_open_data_output[i*rx_num + j] = _TEST_PASS; // 0: pass
+-			}
+-
+-			p_rt139_image[i * rx_num + j] = temp_data;
+-		}
+-	}
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  start */
+-	retval = test_save_data_to_csv((short *)p_rt139_image, tx_num, rx_num, OPEN_TEST_CSV_FILE, 0);
+-	if (retval < 0) {
+-		dev_err(rmi4_data->pdev->dev.parent, 
+-			"save open test data to CSV file failed\n");
+-	//	return -EAGAIN; 
+-	}
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  end */
+-exit:
+-	// release resource
+-	kfree(p_rt139_image);
+-	kfree(p_median_image);
+-	kfree(p_buf_col);
+-
+-	return count;
+-}
+-
+-static ssize_t test_sysfs_tddi_elec_open_detector_show(struct device *dev,
+-		struct device_attribute *attr, char *buf)
+-{
+-	int i, j;
+-	int tx_num = f54->tx_assigned;
+-	int rx_num = f54->rx_assigned;
+-	int fail_count = 0;
+-
+-	if (!g_tddi_amp_open_data_output)
+-		return snprintf(buf, PAGE_SIZE, "\nERROR: no g_tddi_amp_open_data_output\n");
+-
+-	// check the special code if failed to get report image
+-	// output the error message
+-	if (g_flag_readrt_err) {
+-
+-		kfree(g_tddi_amp_open_data_output);
+-		g_tddi_amp_open_data_output = NULL;
+-
+-		return snprintf(buf, PAGE_SIZE, "\nERROR: fail to read report image\n");
+-	}
+-
+-	for (i = 0; i < tx_num; i++) {
+-		for (j = 0; j < rx_num; j++) {
+-			if (g_tddi_amp_open_data_output[i * rx_num + j] != _TEST_PASS) {
+-
+-				fail_count += 1;
+-			}
+-		}
+-	}
+-
+-	kfree(g_tddi_amp_open_data_output);
+-	g_tddi_amp_open_data_output = NULL;
+-
+-	return snprintf(buf, PAGE_SIZE, "%s\n", (fail_count == 0) ? "PASS" : "FAIL");
+-}
+-static int test_full_raw(void)
+-{
+-	int fail_cnt = 0;
+-	int retval = 0;
+-
+-	int i, j;
+-	int tx_num = f54->tx_assigned;
+-	int rx_num = f54->rx_assigned;
+-	unsigned short *report_data_16;
+-	unsigned short min = 0, max = 0;
+-	struct synaptics_rmi4_data *rmi4_data = f54->rmi4_data;
+-	struct device *dev = NULL;
+-	struct device_attribute *attr = NULL;
+-
+-	retval = test_sysfs_tddi_full_raw_store(dev, attr, "1", 2);
+-	if (retval < 0) {
+-		fail_cnt++;
+-		dev_err(rmi4_data->pdev->dev.parent, "erro when test_sysfs_tddi_full_raw_store\n");
+-		goto exit;
+-	}
+-
+-	if (!g_tddi_full_raw_data_output) {
+-		fail_cnt++;
+-		dev_err(rmi4_data->pdev->dev.parent,"\nERROR: no g_tddi_full_raw_data_output\n");
+-		goto exit;
+-	}
+-	// check the special code if failed to get report image
+-	// output the error message
+-	if (g_flag_readrt_err) {
+-		dev_err(rmi4_data->pdev->dev.parent, "\nERROR: fail to read report image\n");
+-		fail_cnt++;
+-		goto exit;
+-	}
+-
+-	report_data_16 = (unsigned short *)g_tddi_full_raw_data_output;
+-
+-	min = max = *report_data_16;
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  start */
+-	retval = test_save_data_to_csv((short *)report_data_16, tx_num, rx_num, RAWDATA_TEST_CSV_FILE, 0);
+-	if (retval < 0) {
+-		dev_err(rmi4_data->pdev->dev.parent, 
+-			"save raw test data to CSV file failed\n");
+-	//	return -EAGAIN;	
+-	}
+-/* Huaqin modify for ZQL1650-1522 by diganyun at 2018/06/06  end */
+-	for (i = 0; i < tx_num; i++) {
+-		for (j = 0; j < rx_num; j++) {
+-			min = (min < *report_data_16)? min : *report_data_16;
+-			max = (max > *report_data_16)? max : *report_data_16;
+-			if ((*report_data_16 < g_full_raw_limit_lower) || (*report_data_16 > g_full_raw_limit_upper)) {
+-				dev_err(rmi4_data->pdev->dev.parent, "raw data error at i:%d j:%d %d\n", i, j, *report_data_16);
+-				fail_cnt++;
+-				goto exit;
+-			}
+-			report_data_16++;
+-		}
+-	}
+-
+-exit:
+-	if (g_tddi_full_raw_data_output)
+-		kfree(g_tddi_full_raw_data_output);
+-	g_tddi_full_raw_data_output = NULL;
+-
+-	return fail_cnt;
+-}
+-/* Huaqin modify for ZQL1650-1672 by zhangxiude at 2018/07/12  start */
+-/*
+-static int test_noise(void)
+-{
+-	int retval = 0;
+-	int fail_cnt = 0;
+-	int i, j;
+-	int tx_num = f54->tx_assigned;
+-	int rx_num = f54->rx_assigned;
+-	struct synaptics_rmi4_data *rmi4_data = f54->rmi4_data;
+-	struct device *dev = NULL;
+-	struct device_attribute *attr = NULL;
+-
+-	retval = test_sysfs_tddi_noise_store(dev, attr, "1", 2);
+-	if (retval < 0) {
+-		fail_cnt++;
+-		dev_err(rmi4_data->pdev->dev.parent, "erro when test_sysfs_tddi_noise_store\n");
+-		goto exit;
+-	}
+-
+-	if (!g_tddi_noise_data_output) {
+-			fail_cnt++;
+-			dev_err(rmi4_data->pdev->dev.parent,"\nERROR: no g_tddi_noise_data_output\n");
+-			goto exit;
+-	}
+-
+-	// check the special code if failed to get report image
+-	// output the error message
+-	if (g_flag_readrt_err) {
+-		dev_err(rmi4_data->pdev->dev.parent, "\nERROR: fail to read report image\n");
+-		fail_cnt++;
+-		goto exit;
+-	}
+-
+-	for (i = 0; i < tx_num; i++) {
+-		for (j = 0; j < rx_num; j++) {
+-			if (g_tddi_noise_data_output[i * rx_num + j] != _TEST_PASS) {
+-
+-				fail_cnt += 1;
+-			}
+-		}
+-	}
+-exit:
+-	if (g_tddi_noise_data_output)
+-		kfree(g_tddi_noise_data_output);
+-	g_tddi_noise_data_output = NULL;
+-	return fail_cnt;
+-}
+-*/
+-/* Huaqin modify forZQL1650-1672 by zhangxiude at 2018/07/12  end */
+-static int test_ee_short(void)
+-{
+-	int retval = 0;
+-	int fail_cnt = 0;
+-	int i, j;
+-	int tx_num = f54->tx_assigned;
+-	int rx_num = f54->rx_assigned;
+-	struct synaptics_rmi4_data *rmi4_data = f54->rmi4_data;
+-	struct device *dev = NULL;
+-	struct device_attribute *attr = NULL;
+-
+-	//test tddi ee short item
+-	retval = test_sysfs_tddi_ee_short_store(dev, attr, "1", 2);
+-
+-	if (retval < 0) {
+-		fail_cnt++;
+-		dev_err(rmi4_data->pdev->dev.parent, "erro when test_sysfs_tddi_ee_short_store\n");
+-		goto exit;
+-	}
+-
+-	if (!g_tddi_ee_short_data_output) {
+-		fail_cnt++;
+-		dev_err(rmi4_data->pdev->dev.parent,"\nERROR: no test_sysfs_tddi_ee_short_store\n");
+-		goto exit;
+-	}
+-	// check the special code if failed to get report image
+-	// output the error message
+-	if (g_flag_readrt_err) {
+-		dev_err(rmi4_data->pdev->dev.parent, "\nERROR: fail to read report image\n");
+-		fail_cnt++;
+-		goto exit;
+-	}
+-
+-	for (i = 0; i < tx_num; i++) {
+-		for (j = 0; j < rx_num; j++) {
+-			if (g_tddi_ee_short_data_output[i * rx_num + j] != _TEST_PASS) {
+-
+-				fail_cnt += 1;
+-			}
+-		}
+-	}
+-
+-exit:
+-	if (g_tddi_ee_short_data_output)
+-		kfree(g_tddi_ee_short_data_output);
+-	g_tddi_ee_short_data_output = NULL;
+-	return fail_cnt;
+-}
+-
+-static int test_elec_open_detector(void)
+-{
+-	int retval = 0;
+-	int fail_cnt = 0;
+-	int i, j;
+-	int tx_num = f54->tx_assigned;
+-	int rx_num = f54->rx_assigned;
+-	struct synaptics_rmi4_data *rmi4_data = f54->rmi4_data;
+-	struct device *dev = NULL;
+-	struct device_attribute *attr = NULL;
+-
+-	retval = test_sysfs_tddi_elec_open_detector_store(dev, attr, "1", 2);
+-	if (retval < 0) {
+-		fail_cnt++;
+-		dev_err(rmi4_data->pdev->dev.parent, "erro when test_sysfs_tddi_elec_open_detector_store\n");
+-		goto exit;
+-	}
+-
+-	if (!g_tddi_amp_open_data_output) {
+-		fail_cnt++;
+-		dev_err(rmi4_data->pdev->dev.parent,"\nERROR: no test_sysfs_tddi_elec_open_detector_store\n");
+-		goto exit;
+-	}
+-	// check the special code if failed to get report image
+-	// output the error message
+-	if (g_flag_readrt_err) {
+-		dev_err(rmi4_data->pdev->dev.parent, "\nERROR: fail to read report image\n");
+-		fail_cnt++;
+-		goto exit;
+-	}
+-
+-	for (i = 0; i < tx_num; i++) {
+-		for (j = 0; j < rx_num; j++) {
+-			if (g_tddi_amp_open_data_output[i * rx_num + j] != _TEST_PASS) {
+-
+-				fail_cnt += 1;
+-			}
+-		}
+-	}
+-exit:
+-	if (g_tddi_amp_open_data_output)
+-		kfree(g_tddi_amp_open_data_output);
+-	g_tddi_amp_open_data_output = NULL;
+-	return fail_cnt;
+-}
+-
+-extern int syna_TestResultLen;
+-ssize_t ito_test(void)
+-{
+-	int fail_cnt = 0;
+-	int tmp_fail_cnt = 0;
+-	struct synaptics_rmi4_data *rmi4_data = f54->rmi4_data;
+-
+-	tmp_fail_cnt = test_full_raw();
+-	if (tmp_fail_cnt) {
+-		dev_err(rmi4_data->pdev->dev.parent,"fail to do test full raw\n");
+-	} else {
+-		dev_err(rmi4_data->pdev->dev.parent,"OK to do test full raw\n");
+-	}
+-	fail_cnt += tmp_fail_cnt;
+-/* Huaqin modify for ZQL1650-1672 by zhangxiude at 2018/07/12  start */
+-/*
+-	tmp_fail_cnt = test_noise();
+-	if (tmp_fail_cnt) {
+-		dev_err(rmi4_data->pdev->dev.parent,"fail to do test noise\n");
+-	} else {
+-		dev_err(rmi4_data->pdev->dev.parent,"OK to do test noise\n");
+-	}
+-	fail_cnt += tmp_fail_cnt;
+-*/
+-/* Huaqin modify for ZQL1650-1672 by zhangxiude at 2018/07/12  end */
+-	tmp_fail_cnt = test_ee_short();
+-	if (tmp_fail_cnt) {
+-		dev_err(rmi4_data->pdev->dev.parent,"fail to do test ee short\n");
+-	} else {
+-		dev_err(rmi4_data->pdev->dev.parent,"OK to do test ee short\n");
+-	}
+-	fail_cnt += tmp_fail_cnt;
+-
+-
+-	tmp_fail_cnt = test_elec_open_detector();
+-	if (tmp_fail_cnt) {
+-		dev_err(rmi4_data->pdev->dev.parent,"fail to do test elec open detector\n");
+-	} else {
+-		dev_err(rmi4_data->pdev->dev.parent,"OK to do test elec open detector\n");
+-	}
+-	fail_cnt += tmp_fail_cnt;
+-
+-
+-	rmi4_data->reset_device(rmi4_data, false);
+-
+-	if (fail_cnt >0) {
+-		syna_TestResultLen = 0;
+-		return 0;// 0 fail
+-	} else {
+-		syna_TestResultLen = 1;
+-		return 1;// 1 sucess
+-	}
+-}
+-
+-static ssize_t test_sysfs_ito_test_show(struct device *dev,
+-		struct device_attribute *attr, char *buf)
+-{
+-	int count;
+-	ito_test();
+-	count = sprintf(buf, "%s\n", syna_TestResultLen == 1? "PASS" : "FAIL");
+-	printk(" %s , res = %d \n", __func__, syna_TestResultLen);
+-	return count;
+-}
+-
+-
+-static ssize_t test_sysfs_data_read(struct file *data_file,
+-		struct kobject *kobj, struct bin_attribute *attributes,
+-		char *buf, loff_t pos, size_t count)
+-{
+-	int retval;
+-	unsigned int read_size;
+-	struct synaptics_rmi4_data *rmi4_data = f54->rmi4_data;
+-
+-	mutex_lock(&f54->status_mutex);
+-
+-	retval = test_check_for_idle_status();
+-	if (retval < 0)
+-		goto exit;
+-
+-	if (!f54->report_data) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Report type %d data not available\n",
+-				__func__, f54->report_type);
+-		retval = -EINVAL;
+-		goto exit;
+-	}
+-
+-	if ((f54->data_pos + count) > f54->report_size)
+-		read_size = f54->report_size - f54->data_pos;
+-	else
+-		read_size = min_t(unsigned int, count, f54->report_size);
+-
+-	retval = secure_memcpy(buf, count, f54->report_data + f54->data_pos,
+-			f54->data_buffer_size - f54->data_pos, read_size);
+-	if (retval < 0) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to copy report data\n",
+-				__func__);
+-		goto exit;
+-	}
+-	f54->data_pos += read_size;
+-	retval = read_size;
+-
+-exit:
+-	mutex_unlock(&f54->status_mutex);
+-
+-	return retval;
+-}
+-
+-static void test_report_work(struct work_struct *work)
+-{
+-	int retval;
+-	unsigned char report_index[2];
+-	struct synaptics_rmi4_data *rmi4_data = f54->rmi4_data;
+-
+-	mutex_lock(&f54->status_mutex);
+-
+-	if (f54->status != STATUS_BUSY) {
+-		retval = f54->status;
+-		goto exit;
+-	}
+-
+-	retval = test_wait_for_command_completion();
+-	if (retval < 0) {
+-		retval = STATUS_ERROR;
+-		goto exit;
+-	}
+-
+-	test_set_report_size();
+-	if (f54->report_size == 0) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Report data size = 0\n",
+-				__func__);
+-		retval = STATUS_ERROR;
+-		goto exit;
+-	}
+-
+-	if (f54->data_buffer_size < f54->report_size) {
+-		if (f54->data_buffer_size)
+-			kfree(f54->report_data);
+-		f54->report_data = kzalloc(f54->report_size, GFP_KERNEL);
+-		if (!f54->report_data) {
+-			dev_err(rmi4_data->pdev->dev.parent,
+-					"%s: Failed to alloc mem for data buffer\n",
+-					__func__);
+-			f54->data_buffer_size = 0;
+-			retval = STATUS_ERROR;
+-			goto exit;
+-		}
+-		f54->data_buffer_size = f54->report_size;
+-	}
+-
+-	report_index[0] = 0;
+-	report_index[1] = 0;
+-
+-	retval = synaptics_rmi4_reg_write(rmi4_data,
+-			f54->data_base_addr + REPORT_INDEX_OFFSET,
+-			report_index,
+-			sizeof(report_index));
+-	if (retval < 0) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to write report data index\n",
+-				__func__);
+-		retval = STATUS_ERROR;
+-		goto exit;
+-	}
+-
+-	retval = synaptics_rmi4_reg_read(rmi4_data,
+-			f54->data_base_addr + REPORT_DATA_OFFSET,
+-			f54->report_data,
+-			f54->report_size);
+-	if (retval < 0) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to read report data\n",
+-				__func__);
+-		retval = STATUS_ERROR;
+-		goto exit;
+-	}
+-
+-	retval = STATUS_IDLE;
+-
+-exit:
+-	mutex_unlock(&f54->status_mutex);
+-
+-	if (retval == STATUS_ERROR)
+-		f54->report_size = 0;
+-
+-	f54->status = retval;
+-
+-	return;
+-}
+-
+-static void test_remove_sysfs(void)
+-{
+-	sysfs_remove_group(f54->sysfs_dir, &attr_group);
+-	sysfs_remove_bin_file(f54->sysfs_dir, &test_report_data);
+-	kobject_put(f54->sysfs_dir);
+-
+-	return;
+-}
+-
+-static int test_set_sysfs(void)
+-{
+-	int retval;
+-	struct synaptics_rmi4_data *rmi4_data = f54->rmi4_data;
+-
+-	f54->sysfs_dir = kobject_create_and_add(SYSFS_FOLDER_NAME,
+-			&rmi4_data->input_dev->dev.kobj);
+-	if (!f54->sysfs_dir) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to create sysfs directory\n",
+-				__func__);
+-		goto exit_directory;
+-	}
+-
+-	retval = sysfs_create_bin_file(f54->sysfs_dir, &test_report_data);
+-	if (retval < 0) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to create sysfs bin file\n",
+-				__func__);
+-		goto exit_bin_file;
+-	}
+-
+-	retval = sysfs_create_group(f54->sysfs_dir, &attr_group);
+-	if (retval < 0) {
+-		dev_err(rmi4_data->pdev->dev.parent,
+-				"%s: Failed to create sysfs attributes\n",
+-				__func__);
+-		goto exit_attributes;
++		goto exit_attributes;
+ 	}
+ 
+ 	return 0;
+@@ -4968,16 +3518,8 @@ static int test_set_controls(void)
+ 		reg_addr += CONTROL_98_SIZE;
+ 
+ 	/* control 99 */
+-	if (f54->query.touch_controller_family == 2) {
+-		/* tddi f54 test reporting +  */
+-		control->reg_99 = kzalloc(sizeof(*(control->reg_99)),
+-				GFP_KERNEL);
+-		if (!control->reg_99)
+-			goto exit_no_mem;
+-		control->reg_99->address = reg_addr;
+-		/* tddi f54 test reporting - */
++	if (f54->query.touch_controller_family == 2)
+ 		reg_addr += CONTROL_99_SIZE;
+-	}
+ 
+ 	/* control 100 */
+ 	if (f54->query_16.has_ctrl100)
+@@ -6231,11 +4773,6 @@ static void test_f55_init(struct synaptics_rmi4_data *rmi4_data)
+ 
+ 		f54->tx_assigned = ctrl_43.afe_l_mux_size +
+ 				ctrl_43.afe_r_mux_size;
+-		/* tddi f54 test reporting +  */
+-		f54->swap_sensor_side = ctrl_43.swap_sensor_side;
+-		f54->left_mux_size = ctrl_43.afe_l_mux_size;
+-		f54->right_mux_size = ctrl_43.afe_r_mux_size;
+-		/* tddi f54 test reporting -  */
+ 	}
+ 
+ 	/* force mapping */
+-- 
+2.30.2
+
